@@ -1,0 +1,48 @@
+<?xml version='1.0' encoding='utf-8'?>
+<Scheme LastUpgradeVersion="2600" version="1.3">
+  <BuildAction parallelizeBuildables="YES" buildImplicitDependencies="YES">
+    <BuildActionEntries>
+      <BuildActionEntry buildForTesting="YES" buildForRunning="YES" buildForProfiling="YES" buildForArchiving="YES" buildForAnalyzing="YES">
+        <BuildableReference BuildableIdentifier="primary" BlueprintIdentifier="913C5EB254748B3A163B9252" BuildableName="Ninho.app" BlueprintName="Ninho" ReferencedContainer="container:Ninho.xcodeproj" />
+      </BuildActionEntry>
+      <BuildActionEntry buildForTesting="YES" buildForRunning="NO" buildForProfiling="NO" buildForArchiving="NO" buildForAnalyzing="NO">
+        <BuildableReference BuildableIdentifier="primary" BlueprintIdentifier="C19E9D7BA405E1777B96676A" BuildableName="NinhoTests.xctest" BlueprintName="NinhoTests" ReferencedContainer="container:Ninho.xcodeproj" />
+      </BuildActionEntry>
+      <BuildActionEntry buildForTesting="YES" buildForRunning="NO" buildForProfiling="NO" buildForArchiving="NO" buildForAnalyzing="NO">
+        <BuildableReference BuildableIdentifier="primary" BlueprintIdentifier="68AA0390234E51E065ADF036" BuildableName="NinhoUITests.xctest" BlueprintName="NinhoUITests" ReferencedContainer="container:Ninho.xcodeproj" />
+      </BuildActionEntry>
+    </BuildActionEntries>
+  </BuildAction>
+  <TestAction buildConfiguration="Debug" selectedDebuggerIdentifier="Xcode.DebuggerFoundation.Debugger.LLDB" selectedLauncherIdentifier="Xcode.IDEFoundation.Launcher.LLDB" shouldUseLaunchSchemeArgsEnv="NO" codeCoverageEnabled="YES">
+    <MacroExpansion>
+      <BuildableReference BuildableIdentifier="primary" BlueprintIdentifier="913C5EB254748B3A163B9252" BuildableName="Ninho.app" BlueprintName="Ninho" ReferencedContainer="container:Ninho.xcodeproj" />
+    </MacroExpansion>
+    <CommandLineArguments>
+      <CommandLineArgument argument="--uitesting" isEnabled="YES" />
+      <CommandLineArgument argument="--disable-ai" isEnabled="YES" />
+    </CommandLineArguments>
+    <EnvironmentVariables>
+      <EnvironmentVariable key="NINHO_TEST_PROFILE" value="unit-host" isEnabled="YES" />
+    </EnvironmentVariables>
+    <Testables>
+      <TestableReference skipped="NO" parallelizable="NO">
+        <BuildableReference BuildableIdentifier="primary" BlueprintIdentifier="C19E9D7BA405E1777B96676A" BuildableName="NinhoTests.xctest" BlueprintName="NinhoTests" ReferencedContainer="container:Ninho.xcodeproj" />
+      </TestableReference>
+      <TestableReference skipped="NO" parallelizable="NO">
+        <BuildableReference BuildableIdentifier="primary" BlueprintIdentifier="68AA0390234E51E065ADF036" BuildableName="NinhoUITests.xctest" BlueprintName="NinhoUITests" ReferencedContainer="container:Ninho.xcodeproj" />
+      </TestableReference>
+    </Testables>
+  </TestAction>
+  <LaunchAction buildConfiguration="Debug" selectedDebuggerIdentifier="Xcode.DebuggerFoundation.Debugger.LLDB" selectedLauncherIdentifier="Xcode.IDEFoundation.Launcher.LLDB" launchStyle="0" useCustomWorkingDirectory="NO" ignoresPersistentStateOnLaunch="NO" debugDocumentVersioning="YES" debugServiceExtension="internal" allowLocationSimulation="YES">
+    <BuildableProductRunnable runnableDebuggingMode="0">
+      <BuildableReference BuildableIdentifier="primary" BlueprintIdentifier="913C5EB254748B3A163B9252" BuildableName="Ninho.app" BlueprintName="Ninho" ReferencedContainer="container:Ninho.xcodeproj" />
+    </BuildableProductRunnable>
+  </LaunchAction>
+  <ProfileAction buildConfiguration="Release" shouldUseLaunchSchemeArgsEnv="YES" savedToolIdentifier="" useCustomWorkingDirectory="NO" debugDocumentVersioning="YES">
+    <BuildableProductRunnable runnableDebuggingMode="0">
+      <BuildableReference BuildableIdentifier="primary" BlueprintIdentifier="913C5EB254748B3A163B9252" BuildableName="Ninho.app" BlueprintName="Ninho" ReferencedContainer="container:Ninho.xcodeproj" />
+    </BuildableProductRunnable>
+  </ProfileAction>
+  <AnalyzeAction buildConfiguration="Debug" />
+  <ArchiveAction buildConfiguration="Release" revealArchiveInOrganizer="YES" />
+</Scheme>
