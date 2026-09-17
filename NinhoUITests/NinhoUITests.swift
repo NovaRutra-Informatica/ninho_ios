@@ -5,7 +5,7 @@ import XCTest
     private var app: XCUIApplication!
     private var profile = ""
 
-    override func setUpWithError() throws {
+    @MainActor override func setUp() async throws {
         continueAfterFailure = false
         profile = UUID().uuidString
         app = XCUIApplication()
@@ -14,7 +14,7 @@ import XCTest
         launch(reset: true, reviewDueSeconds: reviewDueSeconds)
     }
 
-    override func tearDownWithError() throws {
+    @MainActor override func tearDown() async throws {
         if let app, app.state != .notRunning {
             let attachment = XCTAttachment(screenshot: app.screenshot())
             attachment.name = name; attachment.lifetime = .keepAlways

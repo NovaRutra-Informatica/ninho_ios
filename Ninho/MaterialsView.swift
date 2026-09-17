@@ -22,7 +22,7 @@ struct MaterialRows: View {
     var subjectID = ""
     var lessonID = ""
     @State private var importing = false
-    private var materials: [Material] { store.state.materials.filter { (subjectID.isEmpty || $0.subjectId == subjectID) && (lessonID.isEmpty || $0.lessonId == lessonID) } }
+    private var materials: [NinhoCore.Material] { store.state.materials.filter { (subjectID.isEmpty || $0.subjectId == subjectID) && (lessonID.isEmpty || $0.lessonId == lessonID) } }
     var body: some View {
         ForEach(materials) { material in
             NavigationLink { MaterialDetailView(materialID: material.id) } label: {
@@ -55,7 +55,7 @@ struct MaterialDetailView: View {
     @State private var lessonID = ""
     @State private var initializedMaterialID: String?
     @State private var deleting = false
-    private var material: Material? { store.state.materials.first { $0.id == materialID } }
+    private var material: NinhoCore.Material? { store.state.materials.first { $0.id == materialID } }
     var body: some View {
         Group {
             if let material {

@@ -14,7 +14,7 @@ require_xcode() {
   command -v python3 >/dev/null
   command -v xcodebuild >/dev/null
   local version
-  version="$(xcodebuild -version | awk '/^Xcode / {print $2; exit}')"
+  version="$(xcodebuild -version | awk '/^Xcode / && !found {print $2; found=1}')"
   if [[ -z "$version" || "${version%%.*}" -lt 26 ]]; then
     echo "Selecione Xcode 26+ com xcode-select. Versão atual: ${version:-indisponível}." >&2
     exit 2

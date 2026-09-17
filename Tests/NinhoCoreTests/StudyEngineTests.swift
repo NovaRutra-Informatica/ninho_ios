@@ -391,4 +391,46 @@ final class StudyEngineTests: XCTestCase {
         XCTAssertEqual(insight.coveragePercent, 100)
         XCTAssertTrue(overview.limits.contains { $0.contains("não mede domínio") })
     }
+
+    func testMentorPriorityCombinesBoundedSignalsCapsAt100AndSortsTiesByName() throws {
+        var state = AppState(programs: [StudyProgram(id: "program", name: "Estudos")])
+        for (id, name) in [("beta", "Beta"), ("mixed", "Mista"), ("alpha", "Alfa"), ("capped", "Zulu")] {
+            state.subjects.append(Subject(id: id, programId: "program", name: name))
+            state.courses.append(Course(id: "module-\(id)", subjectId: id, title: "Módulo"))
+            state.lessons.append(Lesson(id: "lesson-\(id)", courseId: "module-\(id)", subjectId: id, title: "Aula"))
+        }
+        let created = StudyEngine.timestamp(now.addingTimeInterval(-30 * 86400))
+        for index in 0..<11 {
+            var item = card("capped-\(index)", subject: "capped", lesson: "lesson-capped")
+            item.createdAt = created
+            item.lastReviewedAt = created
+            item.dueAt = StudyEngine.timestamp(now.addingTimeInterval(-20 * 86400))
+            item.flag = index < 6 ? .outdated : .relearn
+            state.cards.append(item)
+        }
+        for index in 0..<2 {
+            var item = card("mixed-\(index)", subject: "mixed", lesson: "lesson-mixed")
+            item.createdAt = created
+            item.lastReviewedAt = created
+            item.dueAt = StudyEngine.timestamp(now.addingTimeInterval(-3 * 86400))
+            item.flag = index == 0 ? .outdated : .relearn
+            state.cards.append(item)
+        }
+        state.exams = [Exam(id: "mixed-exam", title: "Prova", subjectId: "mixed", date: "2026-09-24")]
+        try StudyEngine.validate(state)
+
+        let subjects = StudyEngine.overview(in: state, at: now, calendar: utc).subjects
+        XCTAssertEqual(subjects.map(\.subjectId), ["capped", "mixed", "alpha", "beta"])
+        XCTAssertEqual(subjects.map(\.priority), [95, 48, 8, 8])
+        XCTAssertEqual(subjects[0].dueCards, 11)
+        XCTAssertEqual(subjects[0].outdatedCards, 6)
+        XCTAssertEqual(subjects[0].relearnCards, 5)
+        XCTAssertEqual(subjects[1].daysToExam, 10)
+
+        state.exams.append(Exam(id: "capped-exam", title: "Prova hoje", subjectId: "capped", date: "2026-09-14"))
+        try StudyEngine.validate(state)
+        let urgent = StudyEngine.overview(in: state, at: now, calendar: utc).subjects
+        XCTAssertEqual(urgent.map(\.subjectId), ["capped", "mixed", "alpha", "beta"])
+        XCTAssertEqual(urgent.map(\.priority), [100, 48, 8, 8])
+    }
 }

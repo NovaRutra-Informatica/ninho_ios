@@ -1,7 +1,11 @@
 """Portable checks of the delivered scaffold, not an Xcode/iOS build."""
 import copy
+import os
 import re
 from pathlib import Path
+import subprocess
+import sys
+import tempfile
 import unittest
 import xml.etree.ElementTree as ET
 import generate_project as generator
@@ -84,6 +88,74 @@ class ProjectTests(unittest.TestCase):
         self.assertIn("permissions:\n  contents: read\n", text)
         self.assertNotRegex(text, r"(?m)^\s*(contents|actions|id-token|packages|pull-requests):\s*write\s*$")
         self.assertIn("include-hidden-files: false", text)
+
+
+class XcodeRequirementTests(unittest.TestCase):
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory(prefix="ninho-xcode-requirement-")
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name)
+        scripts = self.root / "scripts"
+        scripts.mkdir()
+        (scripts / "common.sh").write_bytes((generator.ROOT / "scripts/common.sh").read_bytes())
+        (scripts / "generate_project.py").write_text("print('synthetic project checked')\n", encoding="utf-8")
+        self.bin = self.root / "bin"
+        self.bin.mkdir()
+        for name, body in {
+            "uname": "#!/bin/bash\nprintf 'Darwin\\n'\n",
+            "plutil": "#!/bin/bash\nprintf 'synthetic plist checked\\n'\n",
+            "xcodebuild": '#!/bin/bash\nexec "$NINHO_TEST_PYTHON" "$NINHO_TEST_ROOT/fake_xcodebuild.py" "$@"\n',
+        }.items():
+            command = self.bin / name
+            command.write_text(body, encoding="utf-8")
+            command.chmod(0o755)
+        (self.root / "fake_xcodebuild.py").write_text(
+            "import os, signal, sys\n"
+            "from pathlib import Path\n"
+            "assert sys.argv[1:] == ['-version']\n"
+            "signal.signal(signal.SIGPIPE, signal.SIG_DFL)\n"
+            "print('Xcode ' + os.environ['NINHO_TEST_XCODE_VERSION'], flush=True)\n"
+            "for _ in range(64):\n"
+            "    sys.stdout.buffer.write(b'Build information\\n' * 1024)\n"
+            "sys.stdout.flush()\n"
+            "Path(os.environ['NINHO_TEST_ROOT'], 'version-output-complete').touch()\n"
+            "sys.exit(int(os.environ['NINHO_TEST_XCODE_STATUS']))\n",
+            encoding="utf-8",
+        )
+
+    def require_xcode(self, version="26.1.1", status=0):
+        environment = {
+            **os.environ,
+            "PATH": f"{self.bin}{os.pathsep}{os.environ.get('PATH', '')}",
+            "NINHO_TEST_PYTHON": sys.executable,
+            "NINHO_TEST_ROOT": str(self.root),
+            "NINHO_TEST_XCODE_VERSION": version,
+            "NINHO_TEST_XCODE_STATUS": str(status),
+        }
+        return subprocess.run(
+            ["bash", "-c", 'source "$1"; require_xcode', "require-xcode-test", str(self.root / "scripts/common.sh")],
+            env=environment, capture_output=True, text=True, timeout=30,
+        )
+
+    def test_large_version_output_is_drained_without_sigpipe(self):
+        result = self.require_xcode()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue((self.root / "version-output-complete").exists())
+        self.assertIn("synthetic project checked", result.stdout)
+        self.assertIn("synthetic plist checked", result.stdout)
+        self.assertTrue((self.root / "TestResults").is_dir())
+
+    def test_old_xcode_is_rejected_after_reading_version(self):
+        result = self.require_xcode(version="25.0")
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn("Xcode 26+", result.stderr)
+        self.assertFalse((self.root / "TestResults").exists())
+
+    def test_xcodebuild_failure_still_propagates(self):
+        result = self.require_xcode(status=69)
+        self.assertEqual(result.returncode, 69, result.stderr)
+        self.assertNotIn("synthetic project checked", result.stdout)
+        self.assertFalse((self.root / "TestResults").exists())
 
 
 class SimulatorTests(unittest.TestCase):

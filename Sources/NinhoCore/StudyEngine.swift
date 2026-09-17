@@ -289,7 +289,7 @@ public enum StudyEngine {
             if $0.time != $1.time { return $0.time < $1.time }
             return $0.id < $1.id
         }
-        let insights = state.subjects.map { subject -> SubjectInsight in
+        let unsortedInsights: [SubjectInsight] = state.subjects.map { subject -> SubjectInsight in
             let cards = state.cards.filter { $0.subjectId == subject.id }
             let practiced = cards.filter { $0.lastReviewedAt != nil }
             let due = practiced.filter { !$0.suspended && (parseTimestamp($0.dueAt) ?? .distantFuture) <= now }
@@ -315,11 +315,15 @@ public enum StudyEngine {
             if outdated > 0 { signals.append("\(outdated) cartões marcados por você para conferir a fonte; não verificamos atualização automaticamente.") }
             if relearn > 0 { signals.append("\(relearn) cartões marcados para reaprender.") }
             if !lessons.isEmpty { signals.append("\(done) de \(lessons.count) aulas marcadas como concluídas.") }
-            var priority = min(36, due.count * 4) + min(10, max(0, oldest)) + min(25, outdated * 5) + min(16, relearn * 4)
+            var priority: Int = min(36, due.count * 4)
+            priority += min(10, max(0, oldest))
+            priority += min(25, outdated * 5)
+            priority += min(16, relearn * 4)
             if let days = examDays, days <= 30 { priority += days <= 2 ? 40 : days <= 7 ? 30 : days <= 14 ? 20 : 10; signals.append("Prova cadastrada em \(days) dias.") }
             if done < lessons.count { priority += 8 }
             return SubjectInsight(subjectId: subject.id, name: subject.name, status: status, confidence: confidence, priority: min(100, priority), signals: signals, totalCards: cards.count, reviewedCards: practiced.count, dueCards: due.count, outdatedCards: outdated, relearnCards: relearn, lessonsDone: done, totalLessons: lessons.count, coveragePercent: coverage, studyMinutes: studyMinutes, nextExam: exam, daysToExam: examDays)
-        }.sorted { $0.priority == $1.priority ? $0.name < $1.name : $0.priority > $1.priority }
+        }
+        let insights = unsortedInsights.sorted { $0.priority == $1.priority ? $0.name < $1.name : $0.priority > $1.priority }
         let todayMinutes = minutes[today] ?? 0
         return StudyOverview(dueCards: due.count, reviewCards: due.filter { $0.lastReviewedAt != nil }.count, newCards: due.filter { $0.lastReviewedAt == nil }.count, todayMinutes: todayMinutes, weekMinutes: weekMinutes, streak: streak, lessonsDone: state.lessons.filter { $0.status == .done }.count, totalLessons: state.lessons.count, flaggedCards: state.cards.filter { $0.flag != .none }.count, upcomingExams: exams, todayTasks: state.tasks.filter { $0.date == today }, dailyGoalProgress: min(100, todayMinutes / Double(max(1, state.settings.dailyMinutes)) * 100), subjects: insights, limits: [
             "O diagnóstico resume registros do Ninho; não mede domínio real nem prevê nota em prova.",

@@ -91,7 +91,7 @@ import NinhoCore
               automaticFocusFailureID != focus.snapshot.sessionId else { return }
         busy = true; defer { busy = false }
         do { try await finishFocusInternal() }
-        catch { automaticFocusFailureID = focus.snapshot.sessionId; error = friendly(error) }
+        catch { automaticFocusFailureID = focus.snapshot.sessionId; self.error = friendly(error) }
     }
 
     func monitorFocus(every interval: Duration = .seconds(1)) async {
