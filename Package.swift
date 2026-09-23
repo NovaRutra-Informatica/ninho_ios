@@ -8,7 +8,7 @@ let package = Package(
                .library(name: "NinhoWidgetSupport", targets: ["NinhoWidgetSupport"])],
     dependencies: [
         .package(url: "https://github.com/weichsel/ZIPFoundation.git", exact: "0.9.20"),
-        .package(url: "https://github.com/apple/swift-crypto.git", exact: "4.5.2")
+        .package(url: "https://github.com/apple/swift-crypto.git", exact: "5.0.0")
     ],
     targets: [
         .target(name: "NinhoWidgetSupport"),
