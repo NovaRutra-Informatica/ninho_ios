@@ -33,6 +33,18 @@ final class StudySoundsTests: XCTestCase {
         XCTAssertEqual(StudySounds.waveData(for: .save), StudySounds.waveData(for: .save))
     }
 
+    func testNavigationCueIsShorterAndQuieterThanSuccessSounds() {
+        func peak(_ cue: SoundCue) -> Int {
+            let data = StudySounds.waveData(for: cue)
+            return stride(from: 44, to: data.count, by: 2)
+                .map { abs(Int(Int16(bitPattern: word(data, $0)))) }.max() ?? 0
+        }
+        for cue in SoundCue.allCases where cue != .navigation {
+            XCTAssertLessThan(StudySounds.duration(for: .navigation), StudySounds.duration(for: cue))
+            XCTAssertLessThan(peak(.navigation), peak(cue))
+        }
+    }
+
     func testMutedOrUnchangedActionsHaveNoSuccessSound() {
         let previous = AppState()
         var changed = previous; changed.settings.name = "Outro nome"

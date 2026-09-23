@@ -120,7 +120,15 @@ public actor CompactBackupStore {
         return info
     }
     public func newest() throws -> (state: AppState, activity: LocalActivity?, info: CompactBackupInfo)? {
-        for file in try files() { if let value = try? CompactBackup.read(from: file) { return value } }
+        try Task.checkCancellation()
+        let snapshots = try files()
+        for file in snapshots {
+            try Task.checkCancellation()
+            do { return try CompactBackup.read(from: file) }
+            catch is CancellationError { throw CancellationError() }
+            catch { continue }
+        }
+        guard snapshots.isEmpty else { throw LibraryError.invalid("Encontrei cópias locais, mas não consegui validar nenhuma. Elas foram preservadas para recuperação; nenhuma coleção nova vai substituí-las automaticamente.") }
         return nil
     }
     public func list() throws -> [CompactBackupInfo] { try files().compactMap { try? CompactBackup.read(from: $0).info } }

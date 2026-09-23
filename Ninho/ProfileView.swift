@@ -83,6 +83,7 @@ struct ProfileView: View {
         }
         .navigationTitle(onboarding ? "Vamos começar" : "Meu perfil")
         .navigationBarTitleDisplayMode(.inline)
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier(onboarding ? "screen.welcome" : "screen.profile")
         .task {
             guard !initialized else { return }

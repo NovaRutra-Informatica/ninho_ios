@@ -58,51 +58,109 @@ extension TutorialPage {
 private struct NinhoTutorialModifier: ViewModifier {
     @EnvironmentObject var store: NinhoStore
     let page: TutorialPage
-    @State private var step = 0
-    @State private var closed = false
-    @State private var replay = false
-    private var visible: Bool {
-        store.state.profile?.completedAt != nil && !closed &&
-        !(store.state.profile?.tutorialsSeen.contains(page.rawValue) ?? false) &&
-        (!store.isUITesting || ProcessInfo.processInfo.arguments.contains("--test-tutorials"))
-    }
+    @State private var showingTutorial = false
+
     func body(content: Content) -> some View {
-        content.safeAreaInset(edge: .top, spacing: 0) {
-            if visible {
-                VStack(alignment: .leading, spacing: 10) {
-                    HStack {
-                        Label(page.tips[step].title, systemImage: page.tips[step].icon).font(.headline)
-                        Spacer()
-                        Text("\(step + 1)/\(page.tips.count)").font(.caption).foregroundStyle(.secondary)
-                    }
-                    Text(page.tips[step].detail).font(.subheadline).fixedSize(horizontal: false, vertical: true)
-                    HStack {
-                        Button("Ver depois") { complete() }
-                        Spacer()
-                        if step > 0 { Button("Anterior") { step -= 1 } }
-                        Button(step + 1 == page.tips.count ? "Entendi" : "Próximo") {
-                            if step + 1 < page.tips.count { step += 1 } else { complete() }
-                        }.buttonStyle(.borderedProminent)
-                    }
-                }.padding(16).background(NinhoStyle.surface)
-                    .overlay(alignment: .bottom) { Divider() }
-                    .accessibilityIdentifier("tutorial.\(page.rawValue)")
+        content
+        .toolbar { ToolbarItem(placement: .topBarTrailing) {
+            Button { store.playNavigationSound(); showingTutorial = true } label: {
+                Image(systemName: "questionmark.circle").font(.system(size: 21)).frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
+            }.buttonStyle(.plain).labelStyle(.iconOnly).accessibilityLabel("Como usar \(page.title)").accessibilityIdentifier("navigation.help")
+        } }
+        .fullScreenCover(isPresented: $showingTutorial) {
+            TutorialWelcomeView(page: page)
+                .presentationBackground(.clear)
+                .interactiveDismissDisabled()
+        }
+        .onAppear {
+            if store.state.profile?.completedAt != nil,
+               !(store.state.profile?.tutorialsSeen.contains(page.rawValue) ?? false),
+               !store.isUITesting || ProcessInfo.processInfo.arguments.contains("--test-tutorials") {
+                showingTutorial = true
             }
         }
-        .toolbar { ToolbarItem(placement: .topBarTrailing) {
-            Button { replay = true } label: {
-                Image(systemName: "questionmark.circle").font(.system(size: 21)).frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
-            }.labelStyle(.iconOnly).accessibilityLabel("Como usar \(page.title)").accessibilityIdentifier("navigation.help")
-        } }
-        .sheet(isPresented: $replay) { NavigationStack { TutorialDetailView(page: page) } }
-        .onChange(of: store.state.profile?.tutorialsSeen) { _, pages in
-            if pages?.contains(page.rawValue) == false { closed = false; step = 0 }
-        }
     }
+}
+
+private struct TutorialWelcomeView: View {
+    @EnvironmentObject private var store: NinhoStore
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    let page: TutorialPage
+    @State private var step = 0
+    @State private var saving = false
+    @State private var failure = ""
+    private var motion: Animation? { reduceMotion || store.displaySettings.reducedMotion ? nil : .easeInOut(duration: 0.2) }
+
+    var body: some View {
+        ZStack {
+            Color.black.opacity(0.48).ignoresSafeArea().accessibilityHidden(true)
+            GeometryReader { geometry in
+                VStack {
+                    Spacer(minLength: 0)
+                    VStack(spacing: 0) {
+                        ScrollView {
+                            VStack(alignment: .leading, spacing: 24) {
+                                HStack(spacing: 16) {
+                                    NinhoMascot(size: 72).frame(height: 88)
+                                    VStack(alignment: .leading, spacing: 10) {
+                                        Text("NO SEU RITMO").font(.caption2.weight(.semibold)).tracking(2).foregroundStyle(NinhoStyle.green)
+                                        Text(page.title).font(.headline)
+                                        HStack(spacing: 6) {
+                                            ForEach(page.tips.indices, id: \.self) { index in
+                                                Capsule().fill(index <= step ? NinhoStyle.green : NinhoStyle.green.opacity(0.16)).frame(height: 5)
+                                            }
+                                        }.accessibilityHidden(true)
+                                    }
+                                    Text("\(step + 1)/\(page.tips.count)").font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                                        .accessibilityIdentifier("tutorial.\(page.rawValue).step")
+                                }
+                                Image(systemName: page.tips[step].icon).font(.system(size: 26)).foregroundStyle(NinhoStyle.green)
+                                    .frame(width: 56, height: 56).background(NinhoStyle.green.opacity(0.1), in: RoundedRectangle(cornerRadius: 18))
+                                    .accessibilityHidden(true)
+                                Text(page.tips[step].title).font(.system(.title2, design: .rounded, weight: .bold))
+                                    .fixedSize(horizontal: false, vertical: true).accessibilityAddTraits(.isHeader)
+                                Text(page.tips[step].detail).font(.body).foregroundStyle(.secondary).lineSpacing(5)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                if !failure.isEmpty { Text(failure).font(.footnote).foregroundStyle(.red) }
+                            }.padding(24).id(step).transition(.opacity.combined(with: .scale(scale: 0.98)))
+                        }.scrollBounceBehavior(.basedOnSize)
+                        HStack(spacing: 12) {
+                            Button { store.playNavigationSound(); complete() } label: {
+                                Text("Ver depois").frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle())
+                            }.buttonStyle(.bordered).accessibilityIdentifier("tutorial.\(page.rawValue).skip")
+                            Button {
+                                store.playNavigationSound()
+                                if step + 1 < page.tips.count { withAnimation(motion) { step += 1 } }
+                                else { complete() }
+                            } label: {
+                                Text(step + 1 == page.tips.count ? "Entendi" : "Próximo")
+                                    .frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle())
+                            }.buttonStyle(.borderedProminent).accessibilityIdentifier("tutorial.\(page.rawValue).continue")
+                        }.font(.subheadline.weight(.semibold)).tint(NinhoStyle.green).disabled(saving).padding(20)
+                    }
+                    .frame(maxWidth: 440, maxHeight: max(0, min(590, geometry.size.height - 32)))
+                    .background(NinhoStyle.surface, in: RoundedRectangle(cornerRadius: 30))
+                    .overlay { RoundedRectangle(cornerRadius: 30).strokeBorder(NinhoStyle.green.opacity(0.14), lineWidth: 1) }
+                    .shadow(color: .black.opacity(0.16), radius: 30, y: 12)
+                    .padding(.horizontal, 20)
+                    .ninhoPageTransition()
+                    Spacer(minLength: 0)
+                }.frame(width: geometry.size.width, height: geometry.size.height)
+            }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("tutorial.\(page.rawValue).modal")
+    }
+
     private func complete() {
+        guard !saving else { return }
+        saving = true
         Task {
             await store.flushPreferences()
-            if await store.perform(.completeTutorial(page)) { closed = true }
+            if await store.perform(.completeTutorial(page)) { dismiss() }
+            else { failure = store.error ?? "Não foi possível salvar agora. Tente novamente." }
+            saving = false
         }
     }
 }

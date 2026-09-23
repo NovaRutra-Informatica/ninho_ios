@@ -12,7 +12,7 @@ struct BackupGuideView: View {
             VStack(alignment: .leading, spacing: 24) {
                 VStack(alignment: .leading, spacing: 14) {
                     Label("Seu caminho guardado", systemImage: "externaldrive.badge.checkmark").font(.title2.weight(.semibold))
-                    Text("O Ninho cria uma cópia compacta por dia e a atualiza quando seus dados mudam. Mantém os últimos 7 dias, sem exigir que você salve manualmente.")
+                    Text("O Ninho cria uma cópia compacta local por dia, atualiza quando seus dados mudam e salva ao concluir uma revisão ou sessão de estudo. Mantém os últimos 7 dias. Essa cópia fica dentro do aplicativo e é removida se você apagar o Ninho.")
                     Text("Leva perfil, preferências, tutoriais, cursos, matérias, aulas, questões, respostas registradas, progresso, agenda e planos da Íris que você salvou. Nomes, vínculos e notas dos materiais também ficam guardados.")
                     Text("PDFs, vídeos, outros anexos e pesos de IA ficam de fora. A análise conserva apenas os agregados locais limitados a 90 dias e sua preferência de acompanhamento, sem logs de texto ou uso de outros aplicativos. Uma sessão do cronômetro ainda em andamento não entra. Após restaurar, importe novamente os anexos que quiser abrir.").font(.subheadline).foregroundStyle(.secondary)
                     if let date = store.compactBackupDate { Text("Última cópia local: \(date)").font(.footnote).accessibilityIdentifier("backup.lastDate") }
@@ -21,13 +21,14 @@ struct BackupGuideView: View {
                 VStack(alignment: .leading, spacing: 14) {
                     Label("Continuar depois de reinstalar", systemImage: "icloud").font(.headline)
                     Toggle("Copiar automaticamente para o iCloud Drive", isOn: Binding(get: { store.cloudBackupEnabled }, set: { enabled in Task { await store.setCloudBackupEnabled(enabled) } }))
+                        .disabled(!store.cloudBackupAvailable)
                         .accessibilityIdentifier("backup.iCloud")
-                    Text("Opcional. Ao ativar, o iOS recebe somente o arquivo compacto. A sincronização depende de sua conta, espaço e conexão. O aplicativo continua funcionando offline.").font(.subheadline).foregroundStyle(.secondary)
+                    Text("Opcional e desligado inicialmente. Quando você ativar e o iCloud estiver disponível para esta instalação, o Ninho cria sua própria pasta e envia as cópias compactas automaticamente. Você não precisa escolher uma pasta. O envio depende de sua conta, espaço e conexão; sua preferência será mantida.").font(.subheadline).foregroundStyle(.secondary)
                     if !store.cloudBackupNotice.isEmpty { Text(store.cloudBackupNotice).font(.footnote) }
                     Button { cloudConfirmation = true } label: { Label("Recuperar do iCloud", systemImage: "icloud.and.arrow.down").frame(maxWidth: .infinity) }
-                        .buttonStyle(.bordered).disabled(store.busy).accessibilityIdentifier("backup.restoreCloud")
+                        .buttonStyle(.bordered).disabled(store.busy || !store.cloudBackupAvailable).accessibilityIdentifier("backup.restoreCloud")
                     if !store.cloudRecoveryNotice.isEmpty { Text(store.cloudRecoveryNotice).font(.footnote) }
-                    Text("Em uma instalação vazia, uma cópia válida já disponível pode recuperar seu perfil antes das perguntas. Se o iCloud ainda estiver baixando ou não aparecer, use Recuperar e tente novamente. A recuperação nunca substitui automaticamente uma coleção existente.").font(.footnote).foregroundStyle(.secondary)
+                    Text("Com o iCloud disponível, ao reinstalar o Ninho procura e baixa a cópia antes de criar uma coleção nova. Se o download demorar, ele mantém a recuperação pendente e tenta novamente ao voltar para o aplicativo. Uma coleção existente nunca é substituída automaticamente.").font(.footnote).foregroundStyle(.secondary)
                 }.ninhoCard()
                 VStack(alignment: .leading, spacing: 14) {
                     Label("Guardar em Arquivos ou outra nuvem", systemImage: "folder").font(.headline)
@@ -46,6 +47,7 @@ struct BackupGuideView: View {
             }.padding(20).frame(maxWidth: 650).frame(maxWidth: .infinity)
         }.background(NinhoStyle.canvas).navigationTitle("Backup leve").navigationBarTitleDisplayMode(.inline)
             .accessibilityIdentifier("screen.compactBackup")
+            .task { await store.refreshCloudBackupStatus() }
             .fileImporter(isPresented: $importing, allowedContentTypes: [.zip], allowsMultipleSelection: false) { result in
                 switch result { case .success(let urls): pending = urls.first; case .failure(let error): store.error = error.localizedDescription }
             }

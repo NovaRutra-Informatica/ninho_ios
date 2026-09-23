@@ -344,6 +344,57 @@ import NinhoCore
         XCTAssertEqual(store.state.sessions.count, 1)
     }
 
+    func testRestoreReportsBusyWithoutClaimingSuccessAndCanBeRetried() async throws {
+        let root = temporaryRoot(); defer { try? FileManager.default.removeItem(at: root) }
+        let library = StudyLibrary(root: root)
+        _ = try await library.load(seed: fixture())
+        let store = NinhoStore(library: library)
+        await store.start()
+        let before = store.state
+        var recovered = before; recovered.settings.name = "Recuperado da cópia"
+        let source = root.appendingPathComponent("recovery.compact.zip")
+        _ = try CompactBackup.write(recovered, to: source)
+        let entered = DispatchSemaphore(value: 0), release = DispatchSemaphore(value: 0)
+        let blocker = Task { await library.occupyActorForStoreTest(entered: entered, release: release) }
+        defer { release.signal(); blocker.cancel() }
+        var actorOccupied = false
+        try await waitUntil { if !actorOccupied { actorOccupied = entered.wait(timeout: .now()) == .success }; return actorOccupied }
+        let write = Task { await store.perform(.updateLesson(id: "test-lesson", notes: "Salvo durante a busca")) }
+        try await waitUntil { store.busy }
+        let skipped = await store.restoreBackup(source, compact: true)
+        XCTAssertFalse(skipped)
+        XCTAssertNil(store.error)
+        XCTAssertEqual(store.state, before)
+        release.signal()
+        let saved = await write.value
+        XCTAssertTrue(saved)
+        let restored = await store.restoreBackup(source, compact: true)
+        XCTAssertTrue(restored)
+        XCTAssertNil(store.error)
+        XCTAssertEqual(store.state, recovered)
+        let reopened = try await StudyLibrary(root: root).load()
+        XCTAssertEqual(reopened, recovered)
+    }
+
+    func testRestoreFailureReturnsFalseAndPreservesCurrentCollection() async throws {
+        let root = temporaryRoot(); defer { try? FileManager.default.removeItem(at: root) }
+        let library = StudyLibrary(root: root)
+        _ = try await library.load(seed: fixture())
+        let store = NinhoStore(library: library)
+        await store.start()
+        let before = store.state
+        let source = root.appendingPathComponent("invalid.compact.zip")
+        let bytes = Data("invalid archive".utf8)
+        try bytes.write(to: source)
+        let restored = await store.restoreBackup(source, compact: true)
+        XCTAssertFalse(restored)
+        XCTAssertNotNil(store.error)
+        XCTAssertEqual(store.state, before)
+        let reopened = try await StudyLibrary(root: root).load()
+        XCTAssertEqual(reopened, before)
+        XCTAssertEqual(try Data(contentsOf: source), bytes)
+    }
+
     func testAutomaticWriteFailureKeepsPendingAndRequiresAnExplicitRetry() async throws {
         let root = temporaryRoot(); defer { try? FileManager.default.removeItem(at: root) }
         let library = StudyLibrary(root: root)

@@ -3,14 +3,16 @@ import XCTest
 @MainActor final class NinhoUITests: XCTestCase {
     private var app: XCUIApplication!
     private var profile = ""
+    private var dismissedTutorials = Set<String>()
 
     @MainActor override func setUp() async throws {
         continueAfterFailure = false
         profile = UUID().uuidString
+        dismissedTutorials = []
         app = XCUIApplication()
         app.launchEnvironment["NINHO_TEST_PROFILE"] = profile
         let reviewDueSeconds = name.contains("DueReview") ? 15 : nil
-        launch(reset: true, reviewDueSeconds: reviewDueSeconds)
+        launch(reset: true, reviewDueSeconds: reviewDueSeconds, withTutorials: name.contains("WithTutorials"), withOnboarding: name.contains("FreshOnboarding"))
     }
 
     @MainActor override func tearDown() async throws {
@@ -23,13 +25,16 @@ import XCTest
         XCUIDevice.shared.orientation = .portrait
     }
 
-    private func launch(reset: Bool = false, focusSeconds: Int = 60, withMaterial: Bool = false, reviewDueSeconds: Int? = nil) {
+    private func launch(reset: Bool = false, focusSeconds: Int = 60, withMaterial: Bool = false, reviewDueSeconds: Int? = nil, withTutorials: Bool = false, withOnboarding: Bool = false) {
         app.launchArguments = ["--uitesting", "--disable-ai", "--test-focus-seconds", "\(focusSeconds)", "-AppleLanguages", "(pt-BR)", "-AppleLocale", "pt_BR"]
         if reset { app.launchArguments.append("--reset-test-data") }
         if withMaterial { app.launchArguments.append("--with-test-material") }
+        if withTutorials { app.launchArguments.append("--test-tutorials") }
+        if withOnboarding { app.launchArguments.append("--test-onboarding") }
         if let reviewDueSeconds { app.launchArguments += ["--test-review-due-seconds", "\(reviewDueSeconds)"] }
         app.launch()
-        XCTAssertTrue(element("screen.today").waitForExistence(timeout: 15))
+        let screen = withOnboarding ? "screen.welcome" : withTutorials && !dismissedTutorials.contains("today") ? "tutorial.today.modal" : "screen.today"
+        XCTAssertTrue(element(screen).waitForExistence(timeout: 15))
     }
 
     private func element(_ id: String) -> XCUIElement { app.descendants(matching: .any).matching(identifier: id).firstMatch }
@@ -52,11 +57,63 @@ import XCTest
         XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 8), .completed)
     }
 
+    private func nativeSwitch(_ id: String) -> XCUIElement {
+        let outer = app.switches[id].firstMatch
+        for _ in 0..<12 {
+            if outer.exists {
+                let inner = outer.switches.firstMatch
+                let control = inner.exists ? inner : outer
+                if control.isHittable { return control }
+                if control.frame.maxY < app.navigationBars.firstMatch.frame.maxY {
+                    app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.4))
+                        .press(forDuration: 0.05, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.65)))
+                    continue
+                }
+            }
+            app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.65))
+                .press(forDuration: 0.05, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.4)))
+        }
+        XCTAssertTrue(outer.waitForExistence(timeout: 8))
+        let inner = outer.switches.firstMatch
+        return inner.exists ? inner : outer
+    }
+
+    private func setNativeSwitch(_ id: String, value: String) {
+        let control = nativeSwitch(id)
+        XCTAssertTrue(control.isHittable)
+        if control.value as? String != value { control.tap() }
+        let changed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", value), object: control)
+        XCTAssertEqual(XCTWaiter.wait(for: [changed], timeout: 8), .completed)
+    }
+
     private func tab(_ name: String) {
-        if name == "agenda" { tab("more"); tap("more.agenda"); return }
+        if name == "agenda" { tab("more"); tap("more.agenda"); dismissTutorialIfNeeded("agenda"); return }
         if name == "more" { if !element("screen.more").exists { tap("navigation.profile") }; return }
-        let target = app.buttons["tab.\(name)"].firstMatch
+        let target = tabButton(name)
         XCTAssertTrue(target.waitForExistence(timeout: 8)); target.tap()
+        dismissTutorialIfNeeded(name)
+    }
+
+    private func tabButton(_ name: String) -> XCUIElement {
+        let labels = ["today": "Hoje", "studies": "Estudos", "focus": "Foco", "reviews": "Revisões", "assistant": "Assistente"]
+        return app.tabBars.buttons[labels[name] ?? name].firstMatch
+    }
+
+    private func dismissTutorialIfNeeded(_ page: String) {
+        let pages = ["today", "studies", "focus", "reviews", "assistant", "materials", "agenda", "progress"]
+        guard app.launchArguments.contains("--test-tutorials"), pages.contains(page), !dismissedTutorials.contains(page) else { return }
+        let modal = element("tutorial.\(page).modal")
+        XCTAssertTrue(modal.waitForExistence(timeout: 8))
+        tap("tutorial.\(page).skip")
+        XCTAssertTrue(modal.waitForNonExistence(timeout: 8))
+        dismissedTutorials.insert(page)
+    }
+
+    private func capture(_ name: String) {
+        let attachment = XCTAttachment(screenshot: app.screenshot())
+        attachment.name = name
+        attachment.lifetime = .keepAlways
+        add(attachment)
     }
 
     private func type(_ id: String, _ text: String, replacing previous: String = "") {
@@ -87,7 +144,11 @@ import XCTest
         let streak = element("navigation.streak")
         XCTAssertTrue(streak.waitForExistence(timeout: 8))
         XCTAssertTrue(streak.label.contains("Sua sequência:"))
+        XCTAssertEqual(streak.label, "Sua sequência: 0 dias")
+        XCTAssertEqual(streak.value as? String, "Ainda sem estudo hoje")
+        capture("Hoje com sequência de zero dias e barra nativa")
         XCTAssertGreaterThanOrEqual(streak.frame.height, 44)
+        XCTAssertGreaterThanOrEqual(streak.frame.width, 88)
         XCTAssertFalse(element("today.streak").exists)
         let profileButton = element("navigation.profile")
         XCTAssertEqual(profileButton.label, "Meu perfil e preferências")
@@ -95,6 +156,12 @@ import XCTest
         let help = element("navigation.help")
         XCTAssertEqual(help.label, "Como usar Hoje")
         XCTAssertGreaterThanOrEqual(help.frame.height, 44)
+        tap("navigation.help")
+        let replay = element("tutorial.today.modal")
+        XCTAssertTrue(replay.waitForExistence(timeout: 8))
+        capture("Tutorial reaberto pelo botão de ajuda")
+        tap("tutorial.today.skip")
+        XCTAssertTrue(replay.waitForNonExistence(timeout: 8))
         tap("navigation.streak")
         XCTAssertTrue(element("screen.streak").waitForExistence(timeout: 8))
         XCTAssertTrue(element("streak.calendar").waitForExistence(timeout: 8))
@@ -104,6 +171,12 @@ import XCTest
         tap("streak.today")
         XCTAssertEqual(element("streak.month").label, originalMonth)
         tap("streak.close")
+        for horizontalPosition in [0.25, 0.75] {
+            XCTAssertTrue(streak.waitForExistence(timeout: 8))
+            streak.coordinate(withNormalizedOffset: CGVector(dx: horizontalPosition, dy: 0.5)).tap()
+            XCTAssertTrue(element("streak.calendar").waitForExistence(timeout: 8))
+            tap("streak.close")
+        }
         tap("navigation.profile"); tap("more.widgets")
         XCTAssertTrue(element("screen.widgets").waitForExistence(timeout: 8))
         XCTAssertFalse(element("app.error").exists)
@@ -124,6 +197,101 @@ import XCTest
         }
     }
 
+    func testProfileMenusNavigateAndReturnAcrossTabs() {
+        assertProfileMenusNavigateAndReturnAcrossTabs()
+    }
+
+    func testProfileMenusWithTutorialsNavigateAndReturnAcrossTabs() {
+        XCTAssertTrue(element("tutorial.today.modal").waitForExistence(timeout: 8))
+        capture("Tutorial modal antes da navegação")
+        assertProfileMenusNavigateAndReturnAcrossTabs()
+    }
+
+    func testFreshOnboardingWithTutorialsKeepsNavigationInteractive() {
+        for step in 0..<10 {
+            if step < 2 {
+                let label = step == 0 ? "Seu nome" : "O que você quer conquistar?"
+                let textField = app.textFields[label].firstMatch
+                let field = textField.exists ? textField : app.textViews[label].firstMatch
+                XCTAssertTrue(field.waitForExistence(timeout: 8))
+                for _ in 0..<5 {
+                    if field.isHittable { break }
+                    app.swipeUp()
+                }
+                XCTAssertTrue(field.isHittable)
+                field.tap()
+                field.typeText(step == 0 ? "Pessoa de teste" : "Aprender matemática")
+            }
+            let heading = element("welcome.heading")
+            let previous = heading.label
+            tap("welcome.continue")
+            let advanced = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label != %@", previous), object: heading)
+            XCTAssertEqual(XCTWaiter.wait(for: [advanced], timeout: 8), .completed)
+        }
+        tap("welcome.finish")
+        let tutorial = element("tutorial.today.modal")
+        XCTAssertTrue(tutorial.waitForExistence(timeout: 30))
+        capture("Tutorial após concluir o onboarding")
+        XCTAssertFalse(tabButton("studies").isHittable)
+        XCTAssertFalse(element("navigation.profile").isHittable)
+        XCTAssertEqual(tutorial.buttons.count, 2)
+        XCTAssertFalse(app.buttons["Anterior"].exists)
+        XCTAssertEqual(element("tutorial.today.step").label, "1/3")
+        app.coordinate(withNormalizedOffset: .zero)
+            .withOffset(CGVector(dx: 5, dy: app.frame.height / 2)).tap()
+        XCTAssertTrue(tutorial.exists)
+        tap("tutorial.today.continue")
+        XCTAssertEqual(element("tutorial.today.step").label, "2/3")
+        tap("tutorial.today.continue")
+        XCTAssertEqual(element("tutorial.today.step").label, "3/3")
+        XCTAssertEqual(element("tutorial.today.continue").label, "Entendi")
+        tap("tutorial.today.continue")
+        XCTAssertTrue(tutorial.waitForNonExistence(timeout: 8))
+        dismissedTutorials.insert("today")
+        XCTAssertTrue(element("screen.today").waitForExistence(timeout: 8))
+        capture("Hoje com barra nativa e sequência visível")
+        for destination in ["focus", "studies", "reviews", "assistant", "today"] {
+            tab(destination)
+            XCTAssertTrue(element("screen.\(destination)").waitForExistence(timeout: 8))
+        }
+        assertProfileMenusNavigateAndReturnAcrossTabs()
+        app.terminate()
+        launch(withTutorials: true)
+        XCTAssertFalse(element("tutorial.today.modal").exists)
+        tab("focus")
+        XCTAssertFalse(element("tutorial.focus.modal").exists)
+        XCTAssertFalse(element("app.error").exists)
+    }
+
+    private func assertProfileMenusNavigateAndReturnAcrossTabs() {
+        dismissTutorialIfNeeded("today")
+        tap("navigation.profile")
+        XCTAssertTrue(element("screen.more").waitForExistence(timeout: 8))
+        for destination in ["profile", "settings", "materials", "agenda", "progress", "assistant", "widgets"] {
+            tap("more.\(destination)")
+            dismissTutorialIfNeeded(destination)
+            XCTAssertTrue(element("screen.\(destination)").waitForExistence(timeout: 8), "Profile menu did not open \(destination)")
+            back()
+            XCTAssertTrue(element("screen.more").waitForExistence(timeout: 8))
+        }
+        for value in ["0", "1"] {
+            setNativeSwitch("profile.trackNavigation", value: value)
+        }
+        back()
+        XCTAssertTrue(element("screen.today").waitForExistence(timeout: 8))
+        for name in ["studies", "focus", "reviews", "assistant"] {
+            tab(name)
+            tap("navigation.profile")
+            tap("more.widgets")
+            XCTAssertTrue(element("screen.widgets").waitForExistence(timeout: 8))
+            back()
+            XCTAssertTrue(element("screen.more").waitForExistence(timeout: 8))
+            back()
+            XCTAssertTrue(element("screen.\(name)").waitForExistence(timeout: 8))
+        }
+        XCTAssertFalse(element("app.error").exists)
+    }
+
     func testFocusDurationPresetPreviewsImmediatelyAndSurvivesTabRoundTrip() {
         tab("focus")
         tap("focus.preset.45")
@@ -132,10 +300,10 @@ import XCTest
         XCTAssertEqual(element("focus.elapsed").label, "45:00")
         tap("focus.preset.15")
         XCTAssertEqual(element("focus.elapsed").label, "15:00")
-        XCTAssertTrue(element("navigation.glassDock").exists)
+        XCTAssertTrue(app.tabBars.firstMatch.exists)
         XCTAssertFalse(app.tabBars.buttons["Agenda"].exists)
         let capture = XCTAttachment(screenshot: app.screenshot())
-        capture.name = "Foco e dock Liquid Glass sem faixa opaca"; capture.lifetime = .keepAlways
+        capture.name = "Foco e navegação nativa"; capture.lifetime = .keepAlways
         add(capture)
     }
 
@@ -245,6 +413,13 @@ import XCTest
         XCTAssertTrue(element("app.notice").label.contains("Tempo registrado"))
         back()
         XCTAssertTrue(element("lesson.time").label.contains("1 sessão"))
+        tab("today")
+        let studied = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "label == %@ AND value == %@", "Sua sequência: 1 dia", "Estudou hoje"),
+            object: element("navigation.streak")
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [studied], timeout: 8), .completed)
+        capture("Sequência ativa após uma sessão salva")
         app.terminate(); launch(); openFixtureLesson()
         XCTAssertTrue(element("lesson.time").label.contains("1 sessão"))
     }
@@ -297,17 +472,19 @@ import XCTest
     func testSettingsPersistAndEmbeddedAssistantNeedsNoModel() {
         tab("more"); tap("more.settings")
         type("settings.name", "Pessoa sintética", replacing: "Teste")
-        let soundBefore = element("settings.sound").value as? String
-        tap("settings.sound")
-        tap("settings.reducedMotion")
+        element("settings.name").typeText("\n")
+        XCTAssertTrue(app.keyboards.firstMatch.waitForNonExistence(timeout: 8))
         let saved = app.staticTexts.matching(NSPredicate(format: "label == %@", "Salvo neste iPhone")).firstMatch
-        XCTAssertTrue(saved.waitForExistence(timeout: 8))
+        for (id, value) in [("settings.sound", "1"), ("settings.sound", "0"), ("settings.reducedMotion", "1")] {
+            setNativeSwitch(id, value: value)
+            XCTAssertTrue(saved.waitForExistence(timeout: 8))
+        }
         app.terminate(); launch()
         XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS 'Pessoa'")).firstMatch.exists)
         tab("more"); tap("more.settings")
         XCTAssertEqual(element("settings.name").value as? String, "Pessoa sintética")
-        XCTAssertEqual(element("settings.reducedMotion").value as? String, "1")
-        XCTAssertEqual(element("settings.sound").value as? String, soundBefore == "1" ? "0" : "1")
+        XCTAssertEqual(nativeSwitch("settings.sound").value as? String, "0")
+        XCTAssertEqual(nativeSwitch("settings.reducedMotion").value as? String, "1")
         back(); tap("more.assistant")
         XCTAssertTrue(element("assistant.embedded").waitForExistence(timeout: 8))
         XCTAssertFalse(element("assistant.prompt").exists)

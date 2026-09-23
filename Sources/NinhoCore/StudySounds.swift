@@ -1,7 +1,7 @@
 import Foundation
 
 public enum SoundCue: String, CaseIterable, Hashable, Sendable {
-    case save, review, complete, focusDone
+    case navigation, save, review, complete, focusDone
 }
 
 public enum StudySounds {
@@ -9,6 +9,7 @@ public enum StudySounds {
 
     public static func duration(for cue: SoundCue) -> Double {
         switch cue {
+        case .navigation: return 0.07
         case .save: return 0.14
         case .review: return 0.20
         case .complete: return 0.34
@@ -19,6 +20,7 @@ public enum StudySounds {
     public static func waveData(for cue: SoundCue) -> Data {
         let notes: [Double]
         switch cue {
+        case .navigation: notes = [720]
         case .save: notes = [659.25, 783.99]
         case .review: notes = [523.25, 659.25]
         case .complete: notes = [659.25, 783.99, 1_046.50]
@@ -44,7 +46,8 @@ public enum StudySounds {
             let time = Double(index) / Double(sampleRate)
             let fundamental = sin(2 * Double.pi * notes[noteIndex] * time)
             let overtone = sin(4 * Double.pi * notes[noteIndex] * time) * 0.12
-            let sample = Int16(((fundamental + overtone) * envelope * 0.16 * Double(Int16.max)).rounded())
+            let amplitude = cue == .navigation ? 0.10 : 0.16
+            let sample = Int16(((fundamental + overtone) * envelope * amplitude * Double(Int16.max)).rounded())
             word(UInt16(bitPattern: sample))
         }
         return data

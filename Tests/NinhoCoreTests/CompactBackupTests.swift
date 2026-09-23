@@ -67,11 +67,32 @@ final class CompactBackupTests: XCTestCase, @unchecked Sendable {
         let valid = try await backups.save(fixture(), at: date)
         let corrupt = valid.url.deletingLastPathComponent().appendingPathComponent("Ninho-2026-09-24.compact.zip")
         try Data("not a zip".utf8).write(to: corrupt)
-        let selected = try await backups.newest(); XCTAssertEqual(selected?.info.url, valid.url)
+        let selected = try await backups.newest()
+        XCTAssertEqual(selected?.info.url.resolvingSymlinksInPath(), valid.url.resolvingSymlinksInPath())
         let library = StudyLibrary(root: root.appendingPathComponent("library"))
         let before = try await library.load(seed: fixture())
         do { _ = try await library.restoreCompactBackup(from: corrupt); XCTFail("Corrupt archive restored") } catch {}
         let after = try await library.load(); XCTAssertEqual(after, before)
+    }
+    func testMissingAndEmptyDirectoriesAreDistinctFromUnreadableSnapshots() async throws {
+        let root = try temporary(), directory = root.appendingPathComponent("snapshots")
+        let backups = CompactBackupStore(directory: directory)
+        let missing = try await backups.newest()
+        XCTAssertNil(missing)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let unmanaged = directory.appendingPathComponent("notes.txt")
+        try Data("preserve".utf8).write(to: unmanaged)
+        let empty = try await backups.newest()
+        XCTAssertNil(empty)
+        let files = ["Ninho-2026-09-23.compact.zip", "Ninho-2026-09-24.compact.zip"].map { directory.appendingPathComponent($0) }
+        let original = Data("incomplete archive".utf8)
+        for file in files { try original.write(to: file) }
+        do {
+            _ = try await backups.newest()
+            XCTFail("Unreadable snapshots were treated as an empty directory")
+        } catch is LibraryError { }
+        for file in files { XCTAssertEqual(try Data(contentsOf: file), original) }
+        XCTAssertEqual(try Data(contentsOf: unmanaged), Data("preserve".utf8))
     }
     func testAutomaticRestoreOnlyIntoPristineLibraryAndMissingAttachmentIsExplained() async throws {
         let root = try temporary(), file = root.appendingPathComponent("backup.zip")

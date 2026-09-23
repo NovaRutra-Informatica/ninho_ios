@@ -20,7 +20,7 @@ struct SettingsView: View {
                 Stepper("Pausa sugerida: \(settings.breakMinutes) minutos", value: $settings.breakMinutes, in: 1...60)
                 Picker("Aparência", selection: $settings.theme) { Text("Clara").tag(Theme.light); Text("Escura").tag(Theme.dark); Text("Do iPhone").tag(Theme.system) }.accessibilityIdentifier("settings.theme")
                 Toggle("Sons do Ninho", isOn: $settings.sound).accessibilityIdentifier("settings.sound")
-                Text("Sons curtos ao salvar, revisar e concluir. O modo silencioso do iPhone é respeitado.").font(.body).foregroundStyle(.secondary)
+                Text("Sons leves ao navegar, mudar datas, salvar, revisar e concluir. O modo silencioso do iPhone é respeitado.").font(.body).foregroundStyle(.secondary)
                 Toggle("Reduzir animações", isOn: $settings.reducedMotion).accessibilityIdentifier("settings.reducedMotion")
                 Text(store.preferencesStatus.isEmpty ? "Suas alterações são salvas automaticamente neste iPhone." : store.preferencesStatus).font(.footnote).foregroundStyle(.secondary).accessibilityIdentifier("settings.saveStatus")
                 NavigationLink { ProfileView(onboarding: false) } label: { Label("Meu perfil e objetivos", systemImage: "person.crop.circle") }

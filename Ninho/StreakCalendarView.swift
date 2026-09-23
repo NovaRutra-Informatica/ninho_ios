@@ -4,27 +4,36 @@ import NinhoCore
 struct NinhoHeaderShortcuts: ViewModifier {
     @EnvironmentObject private var store: NinhoStore
     @State private var showingCalendar = false
+    private var studiedToday: Bool {
+        let date = Date()
+        return StudyStreak.activeDays(in: store.state.sessions, at: date).contains(StudyEngine.localDate(date))
+    }
 
     func body(content: Content) -> some View {
         content.toolbar {
             ToolbarItem(placement: .topBarLeading) {
-                HStack(spacing: 2) {
-                    NavigationLink { MoreView() } label: {
-                        Image(systemName: "person.crop.circle").font(.system(size: 21))
-                            .frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
-                    }.labelStyle(.iconOnly)
-                        .accessibilityLabel("Meu perfil e preferências").accessibilityIdentifier("navigation.profile")
-                    Button { showingCalendar = true } label: {
-                        HStack(spacing: 5) {
-                            Image(systemName: "flame.fill").font(.system(size: 20)).foregroundStyle(NinhoStyle.amber)
-                            Text(store.overview.streak.formatted()).font(.subheadline.weight(.bold)).monospacedDigit().lineLimit(1)
-                                .foregroundStyle(.primary).contentTransition(.numericText())
-                        }.padding(.horizontal, 6).frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
-                    }.buttonStyle(.plain)
-                        .accessibilityLabel("Sua sequência: \(store.overview.streak) \(store.overview.streak == 1 ? "dia" : "dias")")
-                        .accessibilityHint("Abre o calendário dos dias em que você estudou.")
-                        .accessibilityIdentifier("navigation.streak")
-                }
+                NavigationLink { MoreView() } label: {
+                    Image(systemName: "person.crop.circle").font(.system(size: 21))
+                        .frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
+                }.labelStyle(.iconOnly)
+                    .accessibilityLabel("Meu perfil e preferências").accessibilityIdentifier("navigation.profile")
+            }
+            ToolbarItem(placement: .topBarLeading) {
+                Button { store.playNavigationSound(); showingCalendar = true } label: {
+                    Label {
+                        Text("\(store.overview.streak) \(store.overview.streak == 1 ? "dia" : "dias")")
+                            .font(.subheadline.weight(.bold)).monospacedDigit().lineLimit(1)
+                            .foregroundStyle(.primary).contentTransition(.numericText())
+                    } icon: {
+                        Image(systemName: "flame.fill").font(.system(size: 20))
+                            .foregroundStyle(studiedToday ? NinhoStyle.amber : Color.secondary)
+                    }.labelStyle(.titleAndIcon).padding(.horizontal, 8)
+                        .frame(minWidth: 88, minHeight: 44).contentShape(Rectangle())
+                }.buttonStyle(.plain).fixedSize(horizontal: true, vertical: false)
+                    .accessibilityValue(studiedToday ? "Estudou hoje" : "Ainda sem estudo hoje")
+                    .accessibilityLabel("Sua sequência: \(store.overview.streak) \(store.overview.streak == 1 ? "dia" : "dias")")
+                    .accessibilityHint("Abre o calendário dos dias em que você estudou.")
+                    .accessibilityIdentifier("navigation.streak")
             }
         }.sheet(isPresented: $showingCalendar) { StreakCalendarView() }
     }
@@ -33,10 +42,12 @@ struct NinhoHeaderShortcuts: ViewModifier {
 struct StreakCalendarView: View {
     @EnvironmentObject private var store: NinhoStore
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var month = Date()
     @State private var evaluatedAt = Date()
     @State private var activeDays: Set<String>?
     private var calendar: Calendar { .current }
+    private var monthAnimation: Animation? { reduceMotion || store.displaySettings.reducedMotion ? nil : .easeInOut(duration: 0.24) }
     private var summary: StudyCalendarMonth {
         StudyCalendarMonth(containing: month, activeDays: activeDays ?? [], at: evaluatedAt, calendar: calendar)
     }
@@ -75,14 +86,14 @@ struct StreakCalendarView: View {
                                 }
                                 ForEach(0..<summary.leadingEmptyDays, id: \.self) { _ in Color.clear.frame(height: 54).accessibilityHidden(true) }
                                 ForEach(summary.days) { day in dayCell(day) }
-                            }.accessibilityIdentifier("streak.calendar")
+                            }.id(summary.start).transition(.opacity).accessibilityIdentifier("streak.calendar")
                             HStack(spacing: 18) {
                                 Label("Dia estudado", systemImage: "flame.fill").foregroundStyle(NinhoStyle.amber)
                                 Label("Hoje", systemImage: "circle").foregroundStyle(NinhoStyle.green)
                             }.font(.caption).frame(maxWidth: .infinity)
                         }
                         if !isCurrentMonth {
-                            Button("Voltar para hoje") { month = Date() }.font(.subheadline.weight(.semibold))
+                            Button("Voltar para hoje") { withAnimation(monthAnimation) { month = Date() }; store.playNavigationSound() }.font(.subheadline.weight(.semibold))
                                 .frame(minHeight: 44).accessibilityIdentifier("streak.today")
                         }
                     }.ninhoCard()
@@ -107,7 +118,10 @@ struct StreakCalendarView: View {
 
     private func monthButton(_ label: String, symbol: String, offset: Int) -> some View {
         Button {
-            if let next = calendar.date(byAdding: .month, value: offset, to: summary.start) { month = next }
+            if let next = calendar.date(byAdding: .month, value: offset, to: summary.start) {
+                withAnimation(monthAnimation) { month = next }
+                store.playNavigationSound()
+            }
         } label: { Image(systemName: symbol).frame(width: 44, height: 44).contentShape(Rectangle()) }
             .buttonStyle(.plain).accessibilityLabel(label)
             .accessibilityIdentifier(offset < 0 ? "streak.previous" : "streak.next")

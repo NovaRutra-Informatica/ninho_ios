@@ -3,6 +3,7 @@ import NinhoCore
 
 struct AgendaView: View {
     @EnvironmentObject var store: NinhoStore
+    @Environment(\.accessibilityReduceMotion) private var systemReducedMotion
     @State private var selected = Date()
     @State private var addExam = false
     @State private var addTask = false
@@ -11,10 +12,11 @@ struct AgendaView: View {
     @State private var deletingExam: Exam?
     @State private var deletingTask: StudyTask?
     private var day: String { StudyEngine.localDate(selected) }
+    private var dayAnimation: Animation? { systemReducedMotion || store.displaySettings.reducedMotion ? nil : .easeInOut(duration: 0.22) }
     var body: some View {
         List {
             Section { DatePicker("Escolha um dia", selection: $selected, displayedComponents: .date).datePickerStyle(.graphical).accessibilityIdentifier("agenda.date") }
-            Section("Provas em \(selected.formatted(date: .abbreviated, time: .omitted))") {
+            Section {
                 let exams = store.state.exams.filter { $0.date == day }.sorted { $0.time < $1.time }
                 if exams.isEmpty { Text("Nenhuma prova neste dia.").foregroundStyle(.secondary) }
                 ForEach(exams) { exam in
@@ -26,7 +28,12 @@ struct AgendaView: View {
                         .swipeActions { Button("Excluir", role: .destructive) { deletingExam = exam } }
                 }
                 Button("Marcar prova", systemImage: "plus.circle") { addExam = true }.accessibilityIdentifier("add.exam")
+            } header: {
+                Text("Provas em \(selected.formatted(date: .abbreviated, time: .omitted))")
+                    .contentTransition(.opacity)
+                    .animation(dayAnimation, value: day)
             }
+            .animation(dayAnimation, value: day)
             Section("Pequenos passos do dia") {
                 ForEach(store.state.tasks.filter { $0.date == day }) { task in
                     HStack {
@@ -35,13 +42,14 @@ struct AgendaView: View {
                     }.accessibilityIdentifier("task.\(task.id)").swipeActions { Button("Excluir", role: .destructive) { deletingTask = task } }
                 }
                 Button("Nova tarefa", systemImage: "plus.circle") { addTask = true }.accessibilityIdentifier("add.task")
-            }
+            }.animation(dayAnimation, value: day)
             Section("Próximas provas") {
                 ForEach(store.overview.upcomingExams) { exam in
                     Button { if let date = DateFormatter.ninhoDay.date(from: exam.date) { selected = date } } label: { VStack(alignment: .leading, spacing: 6) { Text(exam.title).font(.headline); Text(exam.date).font(.body).foregroundStyle(.secondary) } }
                 }
             }
         }.navigationTitle("Calendário").accessibilityIdentifier("screen.agenda").ninhoTutorial(.agenda)
+            .onChange(of: day) { _, _ in store.playNavigationSound() }
             .sheet(isPresented: $addExam) { AgendaEditor(isExam: true, date: selected) }
             .sheet(isPresented: $addTask) { AgendaEditor(isExam: false, date: selected) }
             .sheet(item: $editingExam) { AgendaEditor(isExam: true, date: selected, originalExam: $0) }

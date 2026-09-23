@@ -13,6 +13,8 @@ import NinhoCore
     @Published private(set) var compactBackupNotice = ""
     @Published private(set) var cloudBackupNotice = ""
     @Published private(set) var cloudBackupEnabled = false
+    @Published private(set) var cloudBackupAvailable = false
+    @Published private(set) var cloudRecoveryPending = false
     @Published private(set) var compactBackupDate: String?
     @Published private(set) var cloudRecoveryNotice = ""
     private var backupCoordinator: CompactBackupCoordinator?
@@ -98,7 +100,8 @@ import NinhoCore
                 library = StudyLibrary(root: root)
             }
             guard let library else { return }
-            await prepareCompactBackups(library)
+            cloudRecoveryPending = false
+            try await prepareCompactBackups(library)
             state = try await library.load(seed: initialState())
             if isUITesting && ProcessInfo.processInfo.arguments.contains("--with-test-material"), let source = Bundle.main.url(forResource: "test-material", withExtension: "pdf") {
                 state = try await library.importMaterial(from: source, subjectId: "test-subject", lessonId: "test-lesson")
@@ -191,7 +194,8 @@ import NinhoCore
             let arguments = ProcessInfo.processInfo.arguments
             if !arguments.contains("--test-onboarding") {
                 var profile = StudentProfile(); profile.name = "Teste"; profile.goal = "Aprender com dados sintéticos"
-                profile.completedAt = StudyEngine.timestamp(Date()); profile.tutorialsSeen = TutorialPage.allCases.map(\.rawValue)
+                profile.completedAt = StudyEngine.timestamp(Date())
+                profile.tutorialsSeen = ProcessInfo.processInfo.arguments.contains("--test-tutorials") ? [] : TutorialPage.allCases.map(\.rawValue)
                 seed.profile = profile
             }
             if let index = arguments.firstIndex(of: "--test-review-due-seconds"), arguments.indices.contains(index + 1), let seconds = Double(arguments[index + 1]), seconds.isFinite, seconds > 0, seconds <= 60 {
@@ -206,6 +210,10 @@ import NinhoCore
         for index in seed.cards.indices { seed.cards[index].createdAt = now; seed.cards[index].dueAt = now }
         return seed
     }
+    func playNavigationSound() {
+        sounds.play(.navigation, enabled: displaySettings.sound && appActive)
+    }
+
     @discardableResult func perform(_ command: StudyCommand) async -> Bool {
         recordInteraction()
         guard let library, !busy else { return false }
@@ -216,6 +224,10 @@ import NinhoCore
             state = try await library.apply(command)
             if !state.settings.sound { sounds.stop() }
             if let cue = StudySoundPolicy.cue(after: command, previous: previous, updated: state) { sounds.play(cue, enabled: state.settings.sound && appActive) }
+            switch command {
+            case .reviewCard, .addSession: scheduleCompactBackup(immediate: true)
+            default: break
+            }
             return true
         } catch { self.error = friendly(error); return false }
     }
@@ -286,8 +298,8 @@ import NinhoCore
             try await library.exportBackup(to: url); return url
         } catch { self.error = friendly(error); return nil }
     }
-    func restoreBackup(_ url: URL, compact requestedCompact: Bool? = nil) async {
-        guard let library, !busy else { return }
+    @discardableResult func restoreBackup(_ url: URL, compact requestedCompact: Bool? = nil) async -> Bool {
+        guard let library, !busy else { return false }
         busy = true; defer { busy = false }
         let access = url.startAccessingSecurityScopedResource(); defer { if access { url.stopAccessingSecurityScopedResource() } }
         do {
@@ -313,7 +325,8 @@ import NinhoCore
             scheduleWidgetSnapshot()
             if let recovery = await library.takeRecoveryNotice() { notice = recovery }
             sounds.play(.complete, enabled: state.settings.sound && appActive)
-        } catch { self.error = friendly(error) }
+            return true
+        } catch { self.error = friendly(error); return false }
     }
     func focusAction(_ action: String, subjectId: String = "", lessonId: String = "", minutes: Double? = nil) async {
         recordInteraction()
@@ -361,6 +374,7 @@ import NinhoCore
         await focusNotifications.cancel(); focusNotificationNotice = ""
         activity.focusEnded(id: session.id, early: session.durationMinutes * 60 < focus.snapshot.targetSeconds * 0.8)
         activityDirty = true; await persistActivity(); refreshOverview()
+        scheduleCompactBackup(immediate: true)
         sounds.play(.focusDone, enabled: state.settings.sound && appActive)
         notice = "Tempo registrado na sua aula. Bom trabalho!"
     }
@@ -369,27 +383,40 @@ import NinhoCore
         collectRouteInterval(); appActive = active
         if active { startRouteInterval(countVisit: true); refreshOverview(); scheduleWidgetSnapshot(); scheduleCompactBackup(immediate: true) }
         else { overviewTask?.cancel(); overviewTask = nil; sounds.stop() }
+        if active && cloudRecoveryPending && !loaded { Task { await start() } }
         Task { await persistActivity(); if !active { await flushPreferences(); scheduleCompactBackup(immediate: true) } }
     }
 
-    private func prepareCompactBackups(_ library: StudyLibrary) async {
+    private func prepareCompactBackups(_ library: StudyLibrary) async throws {
         guard backupsEnabled else { return }
         let root = await library.root
         let directory = isUITesting ? root.appendingPathComponent("CompactSnapshots") : root.deletingLastPathComponent().appendingPathComponent("NinhoSnapshots")
         let coordinator = CompactBackupCoordinator(localDirectory: directory, usesCloud: !isUITesting)
         backupCoordinator = coordinator; cloudBackupEnabled = await coordinator.cloudEnabled()
+        cloudBackupAvailable = await coordinator.cloudAvailable()
+        if !cloudBackupAvailable { cloudBackupNotice = CloudBackupUnavailable().localizedDescription }
+        var preparingNewLibrary = false
         do {
             if try await library.isPristine() {
+                preparingNewLibrary = true
+                try await coordinator.requireInitialCloudRecovery()
                 if let local = try await coordinator.localRecovery() {
                     _ = try await library.restoreCompactBackup(from: local.url, requirePristine: true)
+                    try await coordinator.finishInitialCloudRecovery()
                     compactBackupNotice = "Seu perfil e progresso foram recuperados da cópia compacta do aparelho."
-                } else if !isUITesting {
+                } else if !isUITesting && cloudBackupAvailable {
                     do {
-                        if let cloud = try await coordinator.recoveryFromCloud(requestDownload: false) {
+                        if let cloud = try await coordinator.initialCloudRecovery() {
+                            defer { try? FileManager.default.removeItem(at: cloud.url) }
                             _ = try await library.restoreCompactBackup(from: cloud.url, requirePristine: true)
-                            cloudRecoveryNotice = "Perfil e progresso recuperados do iCloud. O envio de novas cópias continua desligado até você ativá-lo nos ajustes."
+                            cloudRecoveryNotice = "Perfil e progresso recuperados automaticamente do iCloud. O envio de novas cópias segue sua preferência nos ajustes."
                         }
-                    } catch { cloudRecoveryNotice = error.localizedDescription }
+                        try await coordinator.finishInitialCloudRecovery()
+                    } catch {
+                        cloudRecoveryNotice = error.localizedDescription
+                        cloudRecoveryPending = true
+                        throw error
+                    }
                 }
             }
             if !isUITesting {
@@ -397,7 +424,13 @@ import NinhoCore
                 var excludedRoot = root, values = URLResourceValues(); values.isExcludedFromBackup = true
                 try excludedRoot.setResourceValues(values)
             }
-        } catch { compactBackupNotice = "Não foi possível preparar a recuperação automática: \(friendly(error)). A coleção existente foi preservada." }
+        } catch {
+            compactBackupNotice = "Não foi possível preparar a recuperação automática: \(friendly(error)). A coleção existente foi preservada."
+            if preparingNewLibrary || cloudRecoveryPending {
+                cloudRecoveryPending = true
+                throw error
+            }
+        }
     }
     private func scheduleCompactBackup(immediate: Bool = false) {
         guard loaded, backupsEnabled, let coordinator = backupCoordinator else { return }
@@ -416,8 +449,10 @@ import NinhoCore
                 compactBackupDate = result.local?.createdAt
                 lastBackupUptime = uptime()
                 lastBackupDay = StudyEngine.localDate(date)
-                compactBackupNotice = "Backup compacto salvo automaticamente. São mantidos os últimos 7 dias."
+                compactBackupNotice = "Cópia local salva automaticamente. São mantidos os últimos 7 dias; esta cópia é apagada se você apagar o Ninho."
                 cloudBackupNotice = result.cloudMessage
+                cloudBackupAvailable = result.cloudAvailable
+                cloudBackupEnabled = result.cloudEnabled
             } catch is CancellationError { }
             catch {
                 guard backupRequest == request else { return }
@@ -432,7 +467,17 @@ import NinhoCore
             cloudBackupEnabled = enabled
             cloudBackupNotice = enabled ? "Preparando uma cópia para o iCloud Drive…" : "Envio automático desligado. Cópias já existentes no iCloud não foram apagadas."
             if enabled { scheduleCompactBackup(immediate: true) }
-        } catch { cloudBackupNotice = friendly(error) }
+        } catch {
+            cloudBackupAvailable = await coordinator.cloudAvailable()
+            cloudBackupEnabled = await coordinator.cloudEnabled()
+            cloudBackupNotice = friendly(error)
+        }
+    }
+    func refreshCloudBackupStatus() async {
+        guard let coordinator = backupCoordinator else { return }
+        cloudBackupAvailable = await coordinator.cloudAvailable()
+        cloudBackupEnabled = await coordinator.cloudEnabled()
+        if !cloudBackupAvailable { cloudBackupNotice = CloudBackupUnavailable().localizedDescription }
     }
     func exportCompactBackup() async -> URL? {
         await flushPreferences()
@@ -446,8 +491,11 @@ import NinhoCore
             guard let info = try await coordinator.recoveryFromCloud(requestDownload: true) else {
                 cloudRecoveryNotice = "Ainda não localizei uma cópia disponível. O iCloud pode estar carregando a lista: confira a conta, aguarde e tente novamente, ou escolha um backup em Arquivos."; return
             }
-            await restoreBackup(info.url, compact: true)
-            if error == nil { cloudRecoveryNotice = "Seu perfil e progresso foram recuperados. Anexos e modelos continuam separados." }
+            defer { try? FileManager.default.removeItem(at: info.url) }
+            guard await restoreBackup(info.url, compact: true) else { return }
+            try await coordinator.finishInitialCloudRecovery()
+            cloudRecoveryNotice = "Seu perfil e progresso foram recuperados. Anexos e modelos continuam separados."
+            scheduleCompactBackup(immediate: true)
         } catch { cloudRecoveryNotice = friendly(error) }
     }
 

@@ -10,7 +10,10 @@ import NinhoCore
                 .environmentObject(store)
                 .tint(NinhoStyle.green)
                 .preferredColorScheme(store.displaySettings.theme == .system ? nil : store.displaySettings.theme == .dark ? .dark : .light)
-                .task { await store.start() }
+                .task {
+                    if store.isUITesting { UIApplication.shared.isIdleTimerDisabled = true }
+                    await store.start()
+                }
         }
     }
 }
@@ -31,26 +34,22 @@ struct NinhoRootView: View {
     @State private var showProgress = false
     @State private var navigationRoots = (0..<5).map { _ in UUID() }
     @StateObject private var systemRoutes = SystemRouteRequests.shared
-    @Environment(\.accessibilityReduceMotion) private var reducedMotion
-    @Environment(\.accessibilityReduceTransparency) private var reducedTransparency
     @Environment(\.scenePhase) private var scenePhase
     var body: some View {
         Group {
             if store.loaded && store.state.profile?.completedAt == nil {
-                ProfileView(onboarding: true)
+                NavigationStack { ProfileView(onboarding: true) }
             } else if store.loaded {
                 TabView(selection: $tab) {
-                    NavigationStack { TodayView(tab: $tab).ninhoProfileShortcut() }.id(navigationRoots[0]).tabItem { Label("Hoje", systemImage: "sun.max") }.tag(0).accessibilityIdentifier("tab.today")
-                    NavigationStack { StudiesView().ninhoProfileShortcut() }.id(navigationRoots[1]).tabItem { Label("Estudos", systemImage: "books.vertical") }.tag(1).accessibilityIdentifier("tab.studies")
-                    NavigationStack { FocusView().ninhoProfileShortcut() }.id(navigationRoots[2]).tabItem { Label("Foco", systemImage: "timer") }.tag(2).accessibilityIdentifier("tab.focus")
-                    NavigationStack { ReviewsView().ninhoProfileShortcut() }.id(navigationRoots[3]).tabItem { Label("Revisões", systemImage: "rectangle.on.rectangle") }.tag(3).accessibilityIdentifier("tab.reviews")
-                    NavigationStack { AssistantView(state: store.state).ninhoProfileShortcut() }.id(navigationRoots[4]).tabItem { Label("Assistente", systemImage: "sparkles") }.tag(4).accessibilityIdentifier("tab.assistant")
+                    NavigationStack { TodayView(tab: $tab).ninhoProfileShortcut() }.id(navigationRoots[0]).ninhoPageTransition().tabItem { Label("Hoje", systemImage: "sun.max") }.tag(0).accessibilityIdentifier("tab.today")
+                    NavigationStack { StudiesView().ninhoProfileShortcut() }.id(navigationRoots[1]).ninhoPageTransition().tabItem { Label("Estudos", systemImage: "books.vertical") }.tag(1).accessibilityIdentifier("tab.studies")
+                    NavigationStack { FocusView().ninhoProfileShortcut() }.id(navigationRoots[2]).ninhoPageTransition().tabItem { Label("Foco", systemImage: "timer") }.tag(2).accessibilityIdentifier("tab.focus")
+                    NavigationStack { ReviewsView().ninhoProfileShortcut() }.id(navigationRoots[3]).ninhoPageTransition().tabItem { Label("Revisões", systemImage: "rectangle.on.rectangle") }.tag(3).accessibilityIdentifier("tab.reviews")
+                    NavigationStack { AssistantView(state: store.state).ninhoProfileShortcut() }.id(navigationRoots[4]).ninhoPageTransition().tabItem { Label("Assistente", systemImage: "sparkles") }.tag(4).accessibilityIdentifier("tab.assistant")
                 }
-                .toolbar(.hidden, for: .tabBar)
-                .safeAreaInset(edge: .bottom, spacing: 0) { navigationDock }
             } else {
                 VStack(spacing: 20) {
-                    Image("owl").renderingMode(.original).resizable().scaledToFit().frame(width: 110, height: 110).accessibilityHidden(true)
+                    NinhoMascot(size: 110)
                     Text("Seu próximo passo começa aqui.").font(.title2).multilineTextAlignment(.center)
                     if store.busy { ProgressView("Abrindo seu Ninho…") }
                     else {
@@ -64,7 +63,7 @@ struct NinhoRootView: View {
             store.setAppActive(scenePhase == .active)
             if scenePhase == .active { store.refreshOverview(); await store.monitorFocus() }
         }
-        .simultaneousGesture(TapGesture().onEnded { store.recordInteraction() })
+        .background { NinhoInteractionObserver { store.recordInteraction() } }
         .onOpenURL { url in
             guard let destination = NativeStudyDestination(url: url) else { return }
             pendingDestination = destination
@@ -91,7 +90,6 @@ struct NinhoRootView: View {
                     .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Concluir") { showProgress = false } } }
             }
         }
-        .simultaneousGesture(DragGesture(minimumDistance: 12).onChanged { _ in store.recordInteraction() })
         .safeAreaInset(edge: .top) {
             if let message = store.focusRecoveryNotice {
                 VStack(alignment: .leading, spacing: 8) {
@@ -123,35 +121,6 @@ struct NinhoRootView: View {
         tab = destination.tabIndex
         showProgress = destination == .progress
     }
-
-    private var navigationDock: some View {
-        HStack(spacing: 2) {
-            dockItem("Hoje", icon: "sun.max", value: 0, id: "today")
-            dockItem("Estudos", icon: "books.vertical", value: 1, id: "studies")
-            dockItem("Foco", icon: "timer", value: 2, id: "focus")
-            dockItem("Revisões", icon: "rectangle.on.rectangle", value: 3, id: "reviews")
-            dockItem("Assistente", icon: "sparkles", value: 4, id: "assistant")
-        }
-        .padding(6)
-        .background(reducedTransparency ? Color(.secondarySystemBackground) : .clear, in: Capsule())
-        .glassEffect(.clear.interactive(), in: .capsule)
-        .animation(reducedMotion || store.state.settings.reducedMotion ? nil : .easeInOut(duration: 0.18), value: tab)
-        .padding(.horizontal, 16).padding(.bottom, 8)
-        .accessibilityIdentifier("navigation.glassDock")
-    }
-
-    private func dockItem(_ label: String, icon: String, value: Int, id: String) -> some View {
-        Button { tab = value } label: {
-            VStack(spacing: 4) {
-                Image(systemName: icon).font(.system(size: 19, weight: tab == value ? .semibold : .regular))
-                Text(label).font(.caption2.weight(tab == value ? .semibold : .medium)).lineLimit(1).minimumScaleFactor(0.8)
-            }.frame(maxWidth: .infinity).frame(minHeight: 46)
-                .foregroundStyle(tab == value ? NinhoStyle.green : Color.primary)
-                .background(tab == value ? NinhoStyle.green.opacity(0.14) : .clear, in: Capsule())
-        }.buttonStyle(.plain)
-            .accessibilityIdentifier("tab.\(id)")
-            .accessibilityAddTraits(tab == value ? .isSelected : [])
-    }
 }
 
 struct TodayView: View {
@@ -167,7 +136,7 @@ struct TodayView: View {
                         Text("Um passo de cada vez, \(store.state.settings.name.components(separatedBy: " ").first ?? "Alessandro").")
                             .font(.system(.largeTitle, design: .rounded, weight: .bold))
                     }
-                    Image("owl").renderingMode(.original).resizable().scaledToFit().frame(width: 80, height: 80).accessibilityHidden(true)
+                    NinhoMascot(size: 80)
                 }
                 VStack(alignment: .leading, spacing: 14) {
                     Label("Seu pequeno compromisso de hoje", systemImage: "leaf.fill").font(.headline)
@@ -223,7 +192,7 @@ struct MoreView: View {
     var body: some View {
         List {
             Section {
-                HStack(spacing: 18) { Image("owl").renderingMode(.original).resizable().scaledToFit().frame(width: 68, height: 68); VStack(alignment: .leading) { Text("Ninho").font(.system(.title, design: .rounded, weight: .bold)); Text("Um lugar para aprender no seu ritmo.").font(.body).foregroundStyle(.secondary) } }.padding(.vertical, 8)
+                HStack(spacing: 18) { NinhoMascot(size: 68); VStack(alignment: .leading) { Text("Ninho").font(.system(.title, design: .rounded, weight: .bold)); Text("Um lugar para aprender no seu ritmo.").font(.body).foregroundStyle(.secondary) } }.padding(.vertical, 8)
             }
             NavigationLink { ProfileView(onboarding: false) } label: { Label("Meu perfil e objetivos", systemImage: "person.crop.circle") }.accessibilityIdentifier("more.profile")
             NavigationLink { SettingsView() } label: { Label("Preferências e backup", systemImage: "slider.horizontal.3") }.accessibilityIdentifier("more.settings")
