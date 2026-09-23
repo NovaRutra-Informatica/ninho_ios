@@ -438,7 +438,7 @@ import NinhoCore
         await flushPreferences()
         guard !hasPendingPreferences, let coordinator = backupCoordinator else { return nil }
         do { return try await coordinator.export(state, activity: activity, at: now()) }
-        catch { error = friendly(error); return nil }
+        catch { self.error = friendly(error); return nil }
     }
     func recoverCompactFromCloud() async {
         guard let coordinator = backupCoordinator, !busy else { return }

@@ -33,5 +33,5 @@ struct NinhoShortcuts: AppShortcutsProvider {
         AppShortcut(intent: OpenNinhoFocusIntent(), phrases: ["Abrir meu foco no \(.applicationName)"], shortTitle: "Hora de focar", systemImageName: "timer")
         AppShortcut(intent: OpenNinhoReviewsIntent(), phrases: ["Abrir minhas revisões no \(.applicationName)"], shortTitle: "Minhas revisões", systemImageName: "rectangle.on.rectangle")
     }
-    static var shortcutTileColor: ShortcutTileColor { .green }
+    static var shortcutTileColor: ShortcutTileColor { .grayGreen }
 }
