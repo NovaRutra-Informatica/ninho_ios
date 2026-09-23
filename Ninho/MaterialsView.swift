@@ -13,7 +13,7 @@ struct MaterialsView: View {
         List {
             Section { Text("Guarde PDFs, resumos, imagens, documentos, vídeos e áudios. O arquivo é copiado para o Ninho e fica disponível offline.").font(.body).foregroundStyle(.secondary) }
             MaterialRows(subjectID: subjectID, lessonID: lessonID)
-        }.navigationTitle(lessonID.isEmpty ? "Materiais" : "Materiais da aula").accessibilityIdentifier("screen.materials")
+        }.navigationTitle(lessonID.isEmpty ? "Materiais" : "Materiais da aula").accessibilityIdentifier("screen.materials").ninhoTutorial(.materials)
     }
 }
 
@@ -150,8 +150,17 @@ struct QuickLookFile: UIViewControllerRepresentable {
 struct LocalMediaPlayer: View {
     let url: URL
     @State private var player: AVPlayer?
+    @State private var playbackError: String?
     var body: some View {
-        VideoPlayer(player: player).task(id: url) { player = AVPlayer(url: url) }.onDisappear { player?.pause(); player = nil }
+        VideoPlayer(player: player).overlay {
+            if let playbackError { Text(playbackError).padding().background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16)) }
+        }.task(id: url) {
+            do {
+                try AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback, options: [.mixWithOthers])
+                player = AVPlayer(url: url)
+                playbackError = nil
+            } catch { player = nil; playbackError = "Não foi possível preparar este material sem interromper outros áudios: \(error.localizedDescription)" }
+        }.onDisappear { player?.pause(); player = nil }
     }
 }
 

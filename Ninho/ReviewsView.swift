@@ -7,8 +7,8 @@ struct ReviewsView: View {
     @State private var revealed = false
     @State private var subjectID = ""
     @State private var adding = false
-    @State private var now = Date()
-    private var due: [ReviewCard] { StudyEngine.dueCards(in: store.state, at: now, subjectId: subjectID.isEmpty ? nil : subjectID) }
+    @State private var due: [ReviewCard] = []
+    @State private var loading = true
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
@@ -32,19 +32,29 @@ struct ReviewsView: View {
                             grade("Não lembrei", .again, card); grade("Com esforço", .hard, card); grade("Lembrei", .good, card); grade("Foi fácil", .easy, card)
                         }
                     }
+                } else if loading {
+                    ProgressView("Organizando suas revisões…")
                 } else {
                     ContentUnavailableView("Por hoje, tudo em dia", systemImage: "checkmark.seal", description: Text("O Ninho organiza o próximo reencontro. Você pode estudar uma aula ou preparar novos cartões."))
                 }
                 NavigationLink { CardLibraryView() } label: { Label("Organizar meus cartões", systemImage: "rectangle.stack") }
                 Button("Criar cartão", systemImage: "plus.circle") { adding = true }.accessibilityIdentifier("add.card")
             }.padding(20)
-        }.background(Color(.systemGroupedBackground)).navigationTitle("Revisões").accessibilityIdentifier("screen.reviews")
-            .task(id: scenePhase) {
+        }.background(NinhoStyle.canvas).navigationTitle("Revisões").accessibilityIdentifier("screen.reviews").ninhoTutorial(.reviews)
+            .task(id: "\(store.revision)-\(subjectID)-\(scenePhase)") {
                 guard scenePhase == .active else { return }
-                // Due dates and daily limits change without a state mutation.
+                let snapshot = store.state, selection = subjectID.isEmpty ? nil : subjectID
+                due = []; revealed = false; loading = true
                 while !Task.isCancelled {
-                    now = Date()
-                    do { try await Task.sleep(for: .seconds(1)) }
+                    let worker = Task.detached(priority: .userInitiated) {
+                        let date = Date()
+                        return (StudyEngine.dueCards(in: snapshot, at: date, subjectId: selection),
+                                StudyEngine.nextReviewRefresh(in: snapshot, after: date, subjectId: selection))
+                    }
+                    let (cards, deadline) = await withTaskCancellationHandler { await worker.value } onCancel: { worker.cancel() }
+                    guard !Task.isCancelled else { return }
+                    due = cards; loading = false
+                    do { try await Task.sleep(for: .seconds(max(0.05, deadline.timeIntervalSinceNow))) }
                     catch { return }
                 }
             }

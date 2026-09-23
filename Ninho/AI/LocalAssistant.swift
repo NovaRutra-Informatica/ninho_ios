@@ -3,7 +3,6 @@ import FoundationModels
 import Combine
 import NinhoCore
 
-/// Release this session; iOS manages the on-device model's memory.
 @MainActor final class AppleFoundationModelClient: AssistantModelClient {
     private var session: LanguageModelSession?
     private var requestID: UUID?
@@ -40,7 +39,6 @@ import NinhoCore
         } catch is CancellationError {
             throw CancellationError()
         } catch let error as LanguageModelSession.GenerationError {
-            // iOS 26/Xcode 26 errors; validate replacements against the target SDK.
             switch error {
             case .exceededContextWindowSize: throw AssistantFailure.contextTooLarge
             case .assetsUnavailable: throw AssistantFailure.unavailable

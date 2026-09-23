@@ -6,7 +6,6 @@ import AVFAudio
 import NinhoCore
 @testable import Ninho
 
-/// These tests require Xcode/iOS. Linux checks do not execute this target.
 @MainActor final class AppleIntegrationTests: XCTestCase {
     func testBundledCatalogueDecodesWithoutInventedHistory() throws {
         let url = try XCTUnwrap(Bundle.main.url(forResource: "seed-state", withExtension: "json"))
@@ -17,6 +16,13 @@ import NinhoCore
         XCTAssertTrue(state.sessions.isEmpty)
         XCTAssertTrue(state.cards.allSatisfy { $0.repetitions == 0 })
         XCTAssertNotNil(UIImage(named: "owl"))
+    }
+
+    func testOwlAssetKeepsOriginalColorsAndSquareAspectRatio() throws {
+        let owl = try XCTUnwrap(UIImage(named: "owl"))
+        XCTAssertNotEqual(owl.renderingMode, .alwaysTemplate)
+        XCTAssertEqual(owl.size.width, owl.size.height)
+        XCTAssertGreaterThanOrEqual(owl.size.width * owl.scale, 512)
     }
 
     func testImportedPDFReopensInRealPDFKitAndAppReader() async throws {

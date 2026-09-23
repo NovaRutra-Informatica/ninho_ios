@@ -38,6 +38,20 @@ signing_arguments() {
     exit 2
   fi
   SIGNING_ARGS=("DEVELOPMENT_TEAM=$NINHO_DEVELOPMENT_TEAM" "CODE_SIGN_STYLE=Automatic")
+  if [[ -n "${NINHO_APP_GROUP:-}" ]]; then
+    if [[ ! "$NINHO_APP_GROUP" =~ ^group\.[A-Za-z0-9.-]+$ ]]; then
+      echo "NINHO_APP_GROUP deve ser o identificador group. registrado na sua conta Apple." >&2
+      exit 2
+    fi
+    SIGNING_ARGS+=("NINHO_APP_GROUP=$NINHO_APP_GROUP")
+  fi
+  if [[ -n "${NINHO_ICLOUD_CONTAINER:-}" ]]; then
+    if [[ ! "$NINHO_ICLOUD_CONTAINER" =~ ^iCloud\.[A-Za-z0-9.-]+$ ]]; then
+      echo "NINHO_ICLOUD_CONTAINER deve ser o identificador iCloud. registrado na sua conta Apple." >&2
+      exit 2
+    fi
+    SIGNING_ARGS+=("NINHO_ICLOUD_CONTAINER=$NINHO_ICLOUD_CONTAINER")
+  fi
   if [[ "${NINHO_ALLOW_PROVISIONING_UPDATES:-0}" == 1 ]]; then
     SIGNING_ARGS+=(-allowProvisioningUpdates)
   fi

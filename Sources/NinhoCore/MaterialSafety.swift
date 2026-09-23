@@ -114,7 +114,11 @@ enum MaterialSafety {
             let found = Set(object.keys)
             try require(required.isSubset(of: found) && found.isSubset(of: required.union(optional)), "O índice contém campos ausentes ou desconhecidos.")
         }
-        try keys(state, required: ["version", "settings", "programs", "subjects", "courses", "lessons", "cards", "exams", "materials", "sessions", "tasks"])
+        try keys(state, required: ["version", "settings", "programs", "subjects", "courses", "lessons", "cards", "exams", "materials", "sessions", "tasks"], optional: ["profile"])
+        if let value = state["profile"], !(value is NSNull) {
+            guard let profile = value as? [String: Any] else { throw LibraryError.invalid("Perfil local inválido.") }
+            try keys(profile, required: [], optional: ["name", "goal", "motivation", "targetDate", "subjects", "level", "routine", "availableDays", "preferredTime", "dailyMinutes", "sessionMinutes", "challenges", "preferences", "accessibility", "completedAt", "updatedAt", "revision", "plan", "planStatus", "planProfileRevision", "tutorialsSeen"])
+        }
         guard let settings = state["settings"] as? [String: Any] else { throw LibraryError.invalid("Configurações inválidas.") }
         try keys(settings, required: ["name", "dailyMinutes", "newCardsPerDay", "focusMinutes", "breakMinutes", "theme", "sound", "reducedMotion"])
         let schemas: [String: Set<String>] = [

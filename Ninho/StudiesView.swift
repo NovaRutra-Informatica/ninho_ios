@@ -14,7 +14,7 @@ struct StudiesView: View {
                 }.accessibilityIdentifier("program.\(program.id)")
             }
             Button { adding = true } label: { Label("Novo curso", systemImage: "plus.circle.fill") }.accessibilityIdentifier("add.program")
-        }.searchable(text: $query, prompt: "Buscar curso").navigationTitle("Meus estudos").accessibilityIdentifier("screen.studies")
+        }.searchable(text: $query, prompt: "Buscar curso").navigationTitle("Meus estudos").accessibilityIdentifier("screen.studies").ninhoTutorial(.studies)
             .sheet(isPresented: $adding) { HierarchyEditor(kind: .program, parentID: "") }
     }
 }

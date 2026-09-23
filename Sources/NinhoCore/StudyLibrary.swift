@@ -32,6 +32,7 @@ public actor StudyLibrary {
             generation = folder; state = current
             return current
         }
+        try MaterialSafety.require(try fm.contentsOfDirectory(at: root.appendingPathComponent("collections"), includingPropertiesForKeys: nil).isEmpty, "O índice da coleção está ausente, mas existem dados no aparelho. Restaure uma cópia explicitamente para preservar a coleção anterior.")
         try StudyEngine.validate(seed)
         let folder = try newGeneration()
         try save(seed, to: folder, previous: false)
@@ -92,7 +93,48 @@ public actor StudyLibrary {
     public func materialURL(id: String) throws -> URL {
         let current = try load()
         guard let item = current.materials.first(where: { $0.id == id }), let generation else { throw LibraryError.invalid("Material não encontrado na biblioteca.") }
-        return try materialURL(item, in: generation)
+        do { return try materialURL(item, in: generation) }
+        catch {
+            if MaterialSafety.isMissing(error) { throw LibraryError.invalid("O anexo não está neste iPhone. Nome, notas e vínculos continuam salvos; importe o arquivo novamente para abri-lo.") }
+            throw error
+        }
+    }
+
+    public func isPristine() throws -> Bool {
+        if fm.fileExists(atPath: root.path) { try MaterialSafety.existingDirectory(root) }
+        guard state == nil, !fm.fileExists(atPath: root.appendingPathComponent("current.json").path) else { return false }
+        let collections = root.appendingPathComponent("collections")
+        if fm.fileExists(atPath: collections.path) {
+            try MaterialSafety.existingDirectory(collections)
+            return try fm.contentsOfDirectory(at: collections, includingPropertiesForKeys: nil).isEmpty
+        }
+        return true
+    }
+    public func isCompactBackup(_ source: URL) throws -> Bool { try CompactBackup.recognizes(source) }
+
+    public func restoreCompactBackup(from source: URL, requirePristine: Bool = false) throws -> AppState {
+        let content = try CompactBackup.read(from: source), restored = content.state
+        if requirePristine { try MaterialSafety.require(try isPristine(), "Já existe uma coleção neste iPhone. A restauração precisa ser confirmada.") }
+        try MaterialSafety.directory(root)
+        try MaterialSafety.directory(root.appendingPathComponent("collections"))
+        let folder = try newGeneration()
+        do {
+            try save(restored, to: folder, previous: false)
+            if var activity = content.activity {
+                activity.prune(at: Date())
+                try JSONEncoder().encode(activity).write(to: folder.appendingPathComponent("activity.json"), options: .atomic)
+            }
+            let pointer = root.appendingPathComponent("current.json")
+            if fm.fileExists(atPath: pointer.path) {
+                let backups = root.appendingPathComponent("backups")
+                try MaterialSafety.directory(backups)
+                try MaterialSafety.read(pointer, maximum: 1024).write(to: backups.appendingPathComponent("antes-backup-compacto-\(UUID().uuidString)-pointer.json"), options: .atomic)
+            }
+            try switchGeneration(folder)
+            state = restored
+            recoveryNotice = "Backup compacto restaurado. Perfil, planos, progresso e vínculos foram recuperados; anexos e modelos precisam ser importados separadamente. A coleção anterior permanece no aparelho."
+            return restored
+        } catch { try? fm.removeItem(at: folder); throw error }
     }
 
     private func checkedGeneration(_ folder: URL) throws {
@@ -141,7 +183,6 @@ public actor StudyLibrary {
                 manifest.files.append(BackupFile(path: name, size: checked.size, sha256: checked.hash))
             }
             try add(try JSONEncoder().encode(manifest), name: "manifest.json", to: archive)
-            // Re-read all checksums from the finished archive before delivery.
             try validateArchive(archive, extractTo: nil)
             _ = try MaterialSafety.regular(temporary, maximum: MaterialSafety.backupLimit)
             try fm.moveItem(at: temporary, to: destination)
@@ -165,7 +206,6 @@ public actor StudyLibrary {
             var oldState: AppState?
             if fm.fileExists(atPath: pointer.path) {
                 let pointerData = try MaterialSafety.read(pointer, maximum: 1024)
-                // The exact pointer and every old generation remain available.
                 try pointerData.write(to: backups.appendingPathComponent(label + "-pointer.json"), options: .atomic)
                 do { oldState = try load() }
                 catch {
@@ -208,26 +248,26 @@ public actor StudyLibrary {
 
     public func saveAuxiliary<T: Encodable & Sendable>(_ value: T, name: String) throws {
         _ = try load()
-        try MaterialSafety.require(name == "focus.json", "Registro auxiliar desconhecido.")
+        try MaterialSafety.require(name == "focus.json" || name == "activity.json", "Registro auxiliar desconhecido.")
+        if let activity = value as? LocalActivity { try activity.validate() }
         guard let generation else { throw LibraryError.invalid("A biblioteca não abriu.") }
         try checkedGeneration(generation)
         let data = try JSONEncoder().encode(value)
-        try MaterialSafety.require(data.count <= 65536, "O registro auxiliar excede o limite permitido.")
+        try MaterialSafety.require(data.count <= (name == "activity.json" ? 262144 : 65536), "O registro auxiliar excede o limite permitido.")
         try data.write(to: generation.appendingPathComponent(name), options: .atomic)
     }
     public func loadAuxiliary<T: Decodable & Sendable>(_ type: T.Type, name: String) throws -> T? {
         _ = try load()
-        try MaterialSafety.require(name == "focus.json", "Registro auxiliar desconhecido.")
+        try MaterialSafety.require(name == "focus.json" || name == "activity.json", "Registro auxiliar desconhecido.")
         guard let generation else { return nil }
         let url = generation.appendingPathComponent(name)
         try checkedGeneration(generation)
         let data: Data
-        do { data = try MaterialSafety.read(url, maximum: 65536) }
+        do { data = try MaterialSafety.read(url, maximum: name == "activity.json" ? 262144 : 65536) }
         catch { if MaterialSafety.isMissing(error) { return nil }; throw error }
         return try JSONDecoder().decode(type, from: data)
     }
 
-    /// Move invalid timer bytes intact without loading them. Reject links and I/O failures.
     public func preserveInvalidFocus() throws -> String? {
         _ = try load()
         guard let generation else { throw LibraryError.invalid("A biblioteca não abriu.") }
@@ -334,7 +374,6 @@ public actor StudyLibrary {
             } else {
                 guard let item = restored.materials.first(where: { "materials/" + $0.storedName == file.path }) else { throw LibraryError.invalid("Material desconhecido.") }
                 try MaterialSafety.require(item.size == file.size, "Metadados de tamanho inconsistentes.")
-                // Stream extraction to bound memory use for videos.
                 let scratch = folder?.appendingPathComponent(file.path) ?? root.appendingPathComponent(UUID().uuidString + ".verify")
                 defer { if folder == nil { try? fm.removeItem(at: scratch) } }
                 _ = try read(entry, limit: MaterialSafety.limit(item.type), output: scratch)

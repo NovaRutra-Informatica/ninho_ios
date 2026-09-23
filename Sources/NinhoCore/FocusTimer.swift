@@ -50,7 +50,6 @@ public struct FocusSnapshot: Codable, Equatable, Sendable {
     }
 }
 
-/// Timestamps preserve elapsed time across suspension and relaunch.
 public struct FocusTimer: Codable, Equatable, Sendable {
     public private(set) var snapshot: FocusSnapshot
     public var isRunning: Bool { snapshot.startedAt != nil }
@@ -83,6 +82,11 @@ public struct FocusTimer: Codable, Equatable, Sendable {
 
     public func remainingSeconds(at now: Date = Date()) -> Double {
         max(0, snapshot.targetSeconds - elapsedSeconds(at: now))
+    }
+
+    public func completionDate(at now: Date = Date()) -> Date? {
+        guard isRunning, !snapshot.completed, remainingSeconds(at: now) > 0 else { return nil }
+        return now.addingTimeInterval(remainingSeconds(at: now))
     }
 
     public mutating func configure(subjectId: String, lessonId: String = "", minutes: Double) throws {
@@ -125,7 +129,6 @@ public struct FocusTimer: Codable, Equatable, Sendable {
         try start(at: now)
     }
 
-    /// An uncommitted completion cannot be discarded.
     public mutating func reset() throws {
         guard snapshot.pendingSession == nil else { throw FocusTimerError.completionPending }
         snapshot = FocusSnapshot(subjectId: snapshot.subjectId, lessonId: snapshot.lessonId, targetSeconds: snapshot.targetSeconds)

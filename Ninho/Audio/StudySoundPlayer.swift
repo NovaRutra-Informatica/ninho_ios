@@ -6,10 +6,10 @@ import NinhoCore
     private var player: AVAudioPlayer?
     private var cache: [SoundCue: Data] = [:]
 
-    /// Ambient obeys Silent mode and mixes with other audio.
     func play(_ cue: SoundCue, enabled: Bool) {
         guard enabled else { stop(); return }
         let session = AVAudioSession.sharedInstance()
+        guard !session.isOtherAudioPlaying else { stop(); return }
         // Preserve AVKit's playback category.
         guard session.category == .ambient || session.category == .soloAmbient else { return }
         do {

@@ -8,6 +8,8 @@ struct SettingsView: View {
     @State private var importing = false
     @State private var pendingRestore: URL?
     @State private var exportURL: URL?
+    @State private var initialized = false
+    @Environment(\.scenePhase) private var scenePhase
     var body: some View {
         Form {
             Section("Do seu jeito") {
@@ -20,32 +22,38 @@ struct SettingsView: View {
                 Toggle("Sons do Ninho", isOn: $settings.sound).accessibilityIdentifier("settings.sound")
                 Text("Sons curtos ao salvar, revisar e concluir. O modo silencioso do iPhone é respeitado.").font(.body).foregroundStyle(.secondary)
                 Toggle("Reduzir animações", isOn: $settings.reducedMotion).accessibilityIdentifier("settings.reducedMotion")
-                Button("Salvar ajustes") { Task { await store.perform(.updateSettings(settings)) } }.disabled(store.busy).accessibilityIdentifier("settings.save")
+                Text(store.preferencesStatus.isEmpty ? "Suas alterações são salvas automaticamente neste iPhone." : store.preferencesStatus).font(.footnote).foregroundStyle(.secondary).accessibilityIdentifier("settings.saveStatus")
+                NavigationLink { ProfileView(onboarding: false) } label: { Label("Meu perfil e objetivos", systemImage: "person.crop.circle") }
+                NavigationLink { TutorialLibraryView() } label: { Label("Rever tutoriais", systemImage: "questionmark.circle") }
             }
             Section("Sua coleção, com você") {
-                Button { Task { exportURL = await store.exportBackup() } } label: { Label("Preparar backup ZIP", systemImage: "square.and.arrow.up") }.disabled(store.busy).accessibilityIdentifier("settings.export")
+                NavigationLink { BackupGuideView() } label: { Label("Backup leve automático e iCloud", systemImage: "icloud") }.accessibilityIdentifier("settings.compactBackup")
+                Button { Task { await store.flushPreferences(); if !store.hasPendingPreferences { exportURL = await store.exportBackup() } } } label: { Label("Preparar ZIP completo com anexos", systemImage: "square.and.arrow.up") }.disabled(store.busy).accessibilityIdentifier("settings.export")
                 if let exportURL { ShareLink(item: exportURL) { Label("Salvar em Arquivos ou compartilhar backup", systemImage: "folder") }.accessibilityIdentifier("settings.shareBackup") }
                 Button { importing = true } label: { Label("Restaurar backup do Ninho", systemImage: "square.and.arrow.down") }.disabled(store.busy).accessibilityIdentifier("settings.restore")
                 Text("O backup leva aulas, cartões, anotações, provas, tempo registrado e materiais. Use o ZIP do Ninho no Windows para trazer sua coleção. A transferência é manual; não há sincronização automática.").font(.body).foregroundStyle(.secondary)
             }
             Section("Sobre a Íris") {
-                Text("A assistente usa Apple Intelligence neste iPhone, sem enviar seus estudos a um servidor. Requer iPhone compatível, iOS 26 e o modelo da Apple disponível. O calendário, os cartões e as recomendações de revisão continuam funcionando quando a IA está indisponível.").font(.body).foregroundStyle(.secondary)
+                Text("A Íris acompanha seu perfil, revisões e sessões com uma análise local incluída no Ninho. Funciona offline, sem importar modelos ou depender de Apple Intelligence. As sugestões mostram suas fontes e os limites da amostra. O tempo ativo por tela é agregado por até 90 dias, separado de estudo. Não monitoramos outros aplicativos nem medimos sua atenção.").font(.body).foregroundStyle(.secondary)
             }
             if store.busy { ProgressView("Cuidando da sua coleção…") }
             if !store.notice.isEmpty { Text(store.notice).font(.body).accessibilityIdentifier("app.notice") }
-        }.navigationTitle("Ajustes").accessibilityIdentifier("screen.settings").task { settings = store.state.settings }
+        }.navigationTitle("Ajustes").accessibilityIdentifier("screen.settings").ninhoActivity(.settings).task { settings = store.displaySettings; initialized = true }
+            .onChange(of: settings) { _, value in if initialized { store.queueSettings(value) } }
+            .onDisappear { Task { await store.flushPreferences() } }
+            .onChange(of: scenePhase) { _, phase in if phase != .active { Task { await store.flushPreferences() } } }
             .fileImporter(isPresented: $importing, allowedContentTypes: [.zip], allowsMultipleSelection: false) { result in
                 switch result { case .success(let urls): pendingRestore = urls.first; case .failure(let error): store.error = store.friendly(error) }
             }
             .confirmationDialog("Substituir a coleção deste iPhone?", isPresented: Binding(get: { pendingRestore != nil }, set: { if !$0 { pendingRestore = nil } }), titleVisibility: .visible) {
-                Button("Restaurar coleção", role: .destructive) { if let url = pendingRestore { Task { await store.restoreBackup(url); settings = store.state.settings } }; pendingRestore = nil }
+                Button("Restaurar coleção", role: .destructive) { if let url = pendingRestore { Task { await store.flushPreferences(); if !store.hasPendingPreferences { await store.restoreBackup(url); settings = store.state.settings } } }; pendingRestore = nil }
             } message: { Text("Os arquivos serão conferidos antes da troca. A coleção anterior será preservada localmente para recuperação. Uma sessão de foco em andamento não faz parte do backup.") }
     }
 }
 
 struct ProgressViewScreen: View {
     @EnvironmentObject var store: NinhoStore
-    private var overview: StudyOverview { StudyEngine.overview(in: store.state) }
+    private var overview: StudyOverview { store.overview }
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
@@ -69,6 +77,6 @@ struct ProgressViewScreen: View {
                     }.ninhoCard()
                 }
             }.padding(20)
-        }.background(Color(.systemGroupedBackground)).navigationTitle("Meu progresso").accessibilityIdentifier("screen.progress")
+        }.background(NinhoStyle.canvas).navigationTitle("Meu progresso").accessibilityIdentifier("screen.progress").ninhoTutorial(.progress)
     }
 }

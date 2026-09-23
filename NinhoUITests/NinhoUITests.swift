@@ -1,6 +1,5 @@
 import XCTest
 
-/// Each test owns a UUID profile; relaunch must preserve it.
 @MainActor final class NinhoUITests: XCTestCase {
     private var app: XCUIApplication!
     private var profile = ""
@@ -54,9 +53,9 @@ import XCTest
     }
 
     private func tab(_ name: String) {
-        let labels = ["today": "Hoje", "studies": "Estudos", "reviews": "Revisões", "agenda": "Agenda", "more": "Mais"]
-        let byID = app.tabBars.buttons["tab.\(name)"]
-        let target = byID.exists ? byID : app.tabBars.buttons[labels[name]!]
+        if name == "agenda" { tab("more"); tap("more.agenda"); return }
+        if name == "more" { if !element("screen.more").exists { tap("navigation.profile") }; return }
+        let target = app.buttons["tab.\(name)"].firstMatch
         XCTAssertTrue(target.waitForExistence(timeout: 8)); target.tap()
     }
 
@@ -84,12 +83,38 @@ import XCTest
         XCTAssertTrue(button.waitForExistence(timeout: 8)); button.tap()
     }
 
+    func testHomeStreakAndIconOnlyHeaderOpenTheirDestinations() {
+        let streak = element("navigation.streak")
+        XCTAssertTrue(streak.waitForExistence(timeout: 8))
+        XCTAssertTrue(streak.label.contains("Sua sequência:"))
+        XCTAssertGreaterThanOrEqual(streak.frame.height, 44)
+        XCTAssertFalse(element("today.streak").exists)
+        let profileButton = element("navigation.profile")
+        XCTAssertEqual(profileButton.label, "Meu perfil e preferências")
+        XCTAssertGreaterThanOrEqual(profileButton.frame.width, 44)
+        let help = element("navigation.help")
+        XCTAssertEqual(help.label, "Como usar Hoje")
+        XCTAssertGreaterThanOrEqual(help.frame.height, 44)
+        tap("navigation.streak")
+        XCTAssertTrue(element("screen.streak").waitForExistence(timeout: 8))
+        XCTAssertTrue(element("streak.calendar").waitForExistence(timeout: 8))
+        let originalMonth = element("streak.month").label
+        tap("streak.previous")
+        XCTAssertNotEqual(element("streak.month").label, originalMonth)
+        tap("streak.today")
+        XCTAssertEqual(element("streak.month").label, originalMonth)
+        tap("streak.close")
+        tap("navigation.profile"); tap("more.widgets")
+        XCTAssertTrue(element("screen.widgets").waitForExistence(timeout: 8))
+        XCTAssertFalse(element("app.error").exists)
+    }
+
     func testEveryMainScreenAndLandscapeLayout() {
-        for screen in ["studies", "reviews", "agenda", "more", "today"] {
+        for screen in ["studies", "reviews", "focus", "assistant", "today"] {
             tab(screen); XCTAssertTrue(element("screen.\(screen)").waitForExistence(timeout: 8))
         }
         tab("more")
-        for screen in ["materials", "focus", "progress", "assistant", "settings"] {
+        for screen in ["materials", "agenda", "progress", "assistant", "settings"] {
             tap("more.\(screen)"); XCTAssertTrue(element("screen.\(screen)").waitForExistence(timeout: 8))
             XCUIDevice.shared.orientation = .landscapeLeft
             XCTAssertTrue(app.navigationBars.firstMatch.waitForExistence(timeout: 8))
@@ -97,6 +122,21 @@ import XCTest
             XCUIDevice.shared.orientation = .portrait
             back()
         }
+    }
+
+    func testFocusDurationPresetPreviewsImmediatelyAndSurvivesTabRoundTrip() {
+        tab("focus")
+        tap("focus.preset.45")
+        XCTAssertEqual(element("focus.elapsed").label, "45:00")
+        tab("today"); tab("focus")
+        XCTAssertEqual(element("focus.elapsed").label, "45:00")
+        tap("focus.preset.15")
+        XCTAssertEqual(element("focus.elapsed").label, "15:00")
+        XCTAssertTrue(element("navigation.glassDock").exists)
+        XCTAssertFalse(app.tabBars.buttons["Agenda"].exists)
+        let capture = XCTAttachment(screenshot: app.screenshot())
+        capture.name = "Foco e dock Liquid Glass sem faixa opaca"; capture.lifetime = .keepAlways
+        add(capture)
     }
 
     func testCourseSubjectModuleAndLessonCreationPersistAcrossRelaunch() {
@@ -254,13 +294,14 @@ import XCTest
         XCTAssertFalse(file.exists)
     }
 
-    func testSettingsPersistAndUnavailableAssistantDoesNotInventAnswers() {
+    func testSettingsPersistAndEmbeddedAssistantNeedsNoModel() {
         tab("more"); tap("more.settings")
         type("settings.name", "Pessoa sintética", replacing: "Teste")
         let soundBefore = element("settings.sound").value as? String
         tap("settings.sound")
-        tap("settings.reducedMotion"); tap("settings.save")
-        waitEnabled("settings.save")
+        tap("settings.reducedMotion")
+        let saved = app.staticTexts.matching(NSPredicate(format: "label == %@", "Salvo neste iPhone")).firstMatch
+        XCTAssertTrue(saved.waitForExistence(timeout: 8))
         app.terminate(); launch()
         XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS 'Pessoa'")).firstMatch.exists)
         tab("more"); tap("more.settings")
@@ -268,7 +309,8 @@ import XCTest
         XCTAssertEqual(element("settings.reducedMotion").value as? String, "1")
         XCTAssertEqual(element("settings.sound").value as? String, soundBefore == "1" ? "0" : "1")
         back(); tap("more.assistant")
-        XCTAssertTrue(element("assistant.unavailable").waitForExistence(timeout: 8))
+        XCTAssertTrue(element("assistant.embedded").waitForExistence(timeout: 8))
+        XCTAssertFalse(element("assistant.prompt").exists)
         XCTAssertFalse(element("assistant.generating").exists)
         XCTAssertFalse(element("assistant.send").exists && element("assistant.send").isEnabled)
         XCTAssertFalse(element("app.error").exists)
@@ -357,7 +399,6 @@ import XCTest
     }
 
     func testDueReviewAppearsWithoutNavigationOrStoreMutation() {
-        // Only the fixture's initial dueAt is shortened.
         tab("reviews")
         XCTAssertTrue(app.staticTexts["Por hoje, tudo em dia"].waitForExistence(timeout: 8))
         XCTAssertFalse(element("review.reveal").exists)

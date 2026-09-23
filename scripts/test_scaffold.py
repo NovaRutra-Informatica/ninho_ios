@@ -1,6 +1,7 @@
 """Portable checks of the delivered scaffold, not an Xcode/iOS build."""
 import copy
 import os
+import plistlib
 import re
 from pathlib import Path
 import subprocess
@@ -17,9 +18,61 @@ class ProjectTests(unittest.TestCase):
         self.project = generator.project()
         self.objects = self.project["objects"]
 
+    def test_icloud_backup_container_is_configurable_and_app_only(self):
+        info = plistlib.loads((generator.ROOT / "Ninho/Info.plist").read_bytes())
+        app = plistlib.loads((generator.ROOT / "Ninho/Ninho.entitlements").read_bytes())
+        widget = plistlib.loads((generator.ROOT / "NinhoWidgets/NinhoWidgets.entitlements").read_bytes())
+        self.assertEqual(info["NinhoICloudContainer"], "$(NINHO_ICLOUD_CONTAINER)")
+        self.assertEqual(app["com.apple.developer.icloud-container-identifiers"], ["$(NINHO_ICLOUD_CONTAINER)"])
+        self.assertEqual(app["com.apple.developer.ubiquity-container-identifiers"], ["$(NINHO_ICLOUD_CONTAINER)"])
+        self.assertEqual(app["com.apple.developer.icloud-services"], ["CloudDocuments"])
+        self.assertNotIn("com.apple.developer.icloud-services", widget)
+
     def test_generated_files_match_exactly(self):
         for path, data in generator.outputs().items():
             self.assertEqual(path.read_bytes(), data, str(path))
+
+    def test_widget_extension_is_embedded_and_has_no_app_dependency_cycle(self):
+        app = self.objects[generator.identifier("target.Ninho")]
+        widget = self.objects[generator.identifier("target.NinhoWidgets")]
+        self.assertEqual(widget["productType"], "com.apple.product-type.app-extension")
+        self.assertEqual(widget["dependencies"], [])
+        dependency = self.objects[app["dependencies"][0]]
+        self.assertEqual(dependency["target"], generator.identifier("target.NinhoWidgets"))
+        embed = self.objects[generator.identifier("embed.widgets.phase")]
+        self.assertIn(generator.identifier("embed.widgets.phase"), app["buildPhases"])
+        self.assertEqual(embed["dstSubfolderSpec"], 13)
+        self.assertEqual(self.objects[embed["files"][0]]["fileRef"], widget["productReference"])
+
+    def test_widget_links_only_small_support_library_not_core_or_llama(self):
+        widget = self.objects[generator.identifier("target.NinhoWidgets")]
+        self.assertEqual([self.objects[item]["productName"] for item in widget["packageProductDependencies"]], ["NinhoWidgetSupport"])
+        for config in ("Debug", "Release"):
+            settings = self.objects[generator.identifier(f"config.NinhoWidgets.{config}")]["buildSettings"]
+            self.assertEqual(settings["APPLICATION_EXTENSION_API_ONLY"], "YES")
+            self.assertEqual(settings["SKIP_INSTALL"], "YES")
+        app_products = [self.objects[item]["productName"] for item in self.objects[generator.identifier("target.Ninho")]["packageProductDependencies"]]
+        self.assertIn("NinhoLlama", app_products)
+        self.assertEqual(self.objects[generator.identifier("package.llama")]["relativePath"], "Packages/NinhoLlama")
+
+    def test_app_group_entitlements_and_plists_share_configurable_identifier(self):
+        for target in ("Ninho", "NinhoWidgets"):
+            folder = generator.ROOT / target
+            info = plistlib.loads((folder / "Info.plist").read_bytes())
+            entitlements = plistlib.loads((folder / f"{target}.entitlements").read_bytes())
+            self.assertEqual(info["NinhoAppGroup"], "$(NINHO_APP_GROUP)")
+            self.assertEqual(entitlements["com.apple.security.application-groups"], ["$(NINHO_APP_GROUP)"])
+            exceptions = self.objects[generator.identifier(f"exceptions.{target}")]["membershipExceptions"]
+            self.assertIn("Info.plist", exceptions)
+            self.assertIn(f"{target}.entitlements", exceptions)
+        widget = plistlib.loads((generator.ROOT / "NinhoWidgets/Info.plist").read_bytes())
+        self.assertEqual(widget["NSExtension"]["NSExtensionPointIdentifier"], "com.apple.widgetkit-extension")
+        app = plistlib.loads((generator.ROOT / "Ninho/Info.plist").read_bytes())
+        self.assertEqual(app["CFBundleURLTypes"][0]["CFBundleURLSchemes"], ["ninho"])
+
+    def test_widget_mascot_matches_original_asset(self):
+        for file in ("owl.png", "Contents.json"):
+            self.assertEqual((generator.ROOT / "NinhoWidgets/Assets.xcassets/owl.imageset" / file).read_bytes(), (generator.ROOT / "Ninho/Assets.xcassets/owl.imageset" / file).read_bytes())
 
     def test_all_object_references_resolve(self):
         def inspect(value):
@@ -88,6 +141,38 @@ class ProjectTests(unittest.TestCase):
         self.assertIn("permissions:\n  contents: read\n", text)
         self.assertNotRegex(text, r"(?m)^\s*(contents|actions|id-token|packages|pull-requests):\s*write\s*$")
         self.assertIn("include-hidden-files: false", text)
+
+
+class SigningTests(unittest.TestCase):
+    def run_signing(self, group, cloud=""):
+        environment = {**os.environ, "NINHO_DEVELOPMENT_TEAM": "TESTTEAM01", "NINHO_APP_GROUP": group, "NINHO_ICLOUD_CONTAINER": cloud, "NINHO_ALLOW_PROVISIONING_UPDATES": "0"}
+        return subprocess.run(["bash", "-c", 'source "$1"; signing_arguments; printf "%s\\n" "${SIGNING_ARGS[@]}"', "signing-test", str(generator.ROOT / "scripts/common.sh")], env=environment, capture_output=True, text=True, timeout=30)
+
+    def test_group_override_is_one_build_argument_and_default_is_preserved(self):
+        result = self.run_signing("group.local.ninho-test")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("NINHO_APP_GROUP=group.local.ninho-test\n", result.stdout)
+        default = self.run_signing("")
+        self.assertEqual(default.returncode, 0, default.stderr)
+        self.assertNotIn("NINHO_APP_GROUP=", default.stdout)
+
+    def test_invalid_group_override_is_rejected_before_xcode(self):
+        result = self.run_signing("group.invalid value")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("NINHO_APP_GROUP", result.stderr)
+        self.assertEqual(result.stdout, "")
+
+    def test_cloud_override_is_one_build_argument_and_default_is_preserved(self):
+        result = self.run_signing("", "iCloud.local.ninho-test")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("NINHO_ICLOUD_CONTAINER=iCloud.local.ninho-test\n", result.stdout)
+        self.assertNotIn("NINHO_ICLOUD_CONTAINER=", self.run_signing("").stdout)
+
+    def test_invalid_cloud_override_is_rejected_before_xcode(self):
+        result = self.run_signing("", "iCloud.invalid value")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("NINHO_ICLOUD_CONTAINER", result.stderr)
+        self.assertEqual(result.stdout, "")
 
 
 class XcodeRequirementTests(unittest.TestCase):

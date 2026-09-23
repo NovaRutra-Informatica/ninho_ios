@@ -56,6 +56,7 @@ public enum StudySoundPolicy {
     public static func cue(after command: StudyCommand, previous: AppState, updated: AppState) -> SoundCue? {
         guard updated.settings.sound, previous != updated else { return nil }
         switch command {
+        case .updateSettings, .updateProfile, .completeTutorial, .resetTutorials: return nil
         case .reviewCard: return .review
         case .updateLesson(let id, let status, _):
             if status == .done && previous.lessons.first(where: { $0.id == id })?.status != .done { return .complete }

@@ -37,11 +37,11 @@ struct AgendaView: View {
                 Button("Nova tarefa", systemImage: "plus.circle") { addTask = true }.accessibilityIdentifier("add.task")
             }
             Section("Próximas provas") {
-                ForEach(StudyEngine.overview(in: store.state).upcomingExams) { exam in
+                ForEach(store.overview.upcomingExams) { exam in
                     Button { if let date = DateFormatter.ninhoDay.date(from: exam.date) { selected = date } } label: { VStack(alignment: .leading, spacing: 6) { Text(exam.title).font(.headline); Text(exam.date).font(.body).foregroundStyle(.secondary) } }
                 }
             }
-        }.navigationTitle("Calendário").accessibilityIdentifier("screen.agenda")
+        }.navigationTitle("Calendário").accessibilityIdentifier("screen.agenda").ninhoTutorial(.agenda)
             .sheet(isPresented: $addExam) { AgendaEditor(isExam: true, date: selected) }
             .sheet(isPresented: $addTask) { AgendaEditor(isExam: false, date: selected) }
             .sheet(item: $editingExam) { AgendaEditor(isExam: true, date: selected, originalExam: $0) }

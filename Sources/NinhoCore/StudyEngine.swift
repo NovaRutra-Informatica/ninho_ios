@@ -5,7 +5,6 @@ public enum StudyError: Error, LocalizedError, Equatable, Sendable {
     public var errorDescription: String? { switch self { case .invalid(let message): return message } }
 }
 
-/// Simple spaced repetition; intervals do not measure mastery.
 public enum StudyEngine {
     public static func timestamp(_ date: Date) -> String {
         let formatter = ISO8601DateFormatter()
@@ -68,6 +67,7 @@ public enum StudyEngine {
 
     public static func validate(_ state: AppState) throws {
         try check(state.version == 2, "Versão de dados incompatível. Importe uma coleção Ninho versão 2.")
+        try state.profile?.validate()
         let settings = state.settings
         try check(label(settings.name, 100) && (5...720).contains(settings.dailyMinutes) && (0...200).contains(settings.newCardsPerDay) && (1...180).contains(settings.focusMinutes) && (1...60).contains(settings.breakMinutes), "Configurações fora dos limites permitidos.")
         try unique(state.programs, maximum: 500); try unique(state.subjects, maximum: 500)
@@ -162,7 +162,28 @@ public enum StudyEngine {
         try check(now.timeIntervalSince1970.isFinite, "Relógio inválido.")
         var next = state
         switch command {
-        case .updateSettings(let settings): next.settings = settings
+        case .updateSettings(let settings):
+            next.settings = settings
+            if next.profile != nil {
+                next.profile?.name = settings.name; next.profile?.dailyMinutes = settings.dailyMinutes
+                next.profile?.sessionMinutes = settings.focusMinutes
+                if next.profile?.answers != state.profile?.answers { next.profile?.revision += 1; next.profile?.planStatus = "none" }
+            }
+        case .updateProfile(var profile):
+            // Tutorial progress belongs to its dedicated commands, not a possibly stale editor.
+            profile.tutorialsSeen = state.profile?.tutorialsSeen ?? profile.tutorialsSeen
+            profile.updatedAt = timestamp(now)
+            if profile.answers != state.profile?.answers { profile.revision = (state.profile?.revision ?? 0) + 1; profile.planStatus = "none" }
+            else { profile.revision = state.profile?.revision ?? profile.revision }
+            next.profile = profile
+            if !profile.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { next.settings.name = profile.name }
+            next.settings.dailyMinutes = min(720, max(5, profile.dailyMinutes))
+            next.settings.focusMinutes = min(180, profile.sessionMinutes)
+        case .completeTutorial(let page):
+            var pages = next.profile?.tutorialsSeen ?? []
+            if !pages.contains(page.rawValue) { pages.append(page.rawValue) }
+            next.profile?.tutorialsSeen = pages
+        case .resetTutorials: next.profile?.tutorialsSeen = []
         case .saveProgram(let program):
             save(program, into: &next.programs)
             for i in next.subjects.indices where next.subjects[i].programId == program.id { next.subjects[i].track = program.track }
@@ -264,22 +285,25 @@ public enum StudyEngine {
         return result
     }
 
+    public static func nextReviewRefresh(in state: AppState, after now: Date, subjectId: String? = nil, calendar: Calendar = .current) -> Date {
+        var next = calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: now)) ?? now.addingTimeInterval(3600)
+        for card in state.cards where !card.suspended && (subjectId == nil || card.subjectId == subjectId) {
+            if let due = parseTimestamp(card.dueAt), due > now, due < next { next = due }
+        }
+        return next
+    }
+
     public static func overview(in state: AppState, at now: Date = Date(), calendar: Calendar = .current) -> StudyOverview {
         let today = localDate(now, calendar: calendar), due = dueCards(in: state, at: now, calendar: calendar)
-        var minutes: [String: Double] = [:], active = Set<String>()
+        var minutes: [String: Double] = [:], subjectMinutes: [String: Double] = [:], active = Set<String>()
         for session in state.sessions {
             guard let completed = parseTimestamp(session.completedAt), completed <= now else { continue }
             let day = localDate(completed, calendar: calendar)
             minutes[day, default: 0] += session.durationMinutes
-            if session.durationMinutes > 0 || session.kind == .review { active.insert(day) }
+            subjectMinutes[session.subjectId, default: 0] += session.durationMinutes
+            if StudyStreak.countsAsStudy(session) { active.insert(day) }
         }
-        var day = active.contains(today) ? now : (calendar.date(byAdding: .day, value: -1, to: now) ?? now)
-        var streak = 0
-        while active.contains(localDate(day, calendar: calendar)) {
-            streak += 1
-            guard let previous = calendar.date(byAdding: .day, value: -1, to: day), previous < day else { break }
-            day = previous
-        }
+        let streak = StudyStreak.current(activeDays: active, at: now, calendar: calendar)
         let weekMinutes = (0..<7).reduce(0.0) { sum, offset in
             guard let date = calendar.date(byAdding: .day, value: -offset, to: now) else { return sum }
             return sum + (minutes[localDate(date, calendar: calendar)] ?? 0)
@@ -289,13 +313,15 @@ public enum StudyEngine {
             if $0.time != $1.time { return $0.time < $1.time }
             return $0.id < $1.id
         }
+        let cardsBySubject = Dictionary(grouping: state.cards, by: \.subjectId)
+        let lessonsBySubject = Dictionary(grouping: state.lessons, by: \.subjectId)
         let unsortedInsights: [SubjectInsight] = state.subjects.map { subject -> SubjectInsight in
-            let cards = state.cards.filter { $0.subjectId == subject.id }
+            let cards = cardsBySubject[subject.id] ?? []
             let practiced = cards.filter { $0.lastReviewedAt != nil }
             let due = practiced.filter { !$0.suspended && (parseTimestamp($0.dueAt) ?? .distantFuture) <= now }
             let outdated = cards.filter { $0.flag == .outdated }.count, relearn = cards.filter { $0.flag == .relearn }.count
-            let lessons = state.lessons.filter { $0.subjectId == subject.id }, done = lessons.filter { $0.status == .done }.count
-            let studyMinutes = state.sessions.filter { $0.subjectId == subject.id && (parseTimestamp($0.completedAt) ?? .distantFuture) <= now }.reduce(0.0) { $0 + $1.durationMinutes }
+            let lessons = lessonsBySubject[subject.id] ?? [], done = lessons.filter { $0.status == .done }.count
+            let studyMinutes = subjectMinutes[subject.id] ?? 0
             let stable = practiced.filter { $0.repetitions >= 3 && $0.intervalDays >= 7 }.count
             let coverage: Double? = cards.isEmpty ? nil : (Double(practiced.count) / Double(cards.count) * 100).rounded()
             let exam = exams.first { $0.subjectId == subject.id }

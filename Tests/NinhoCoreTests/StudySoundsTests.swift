@@ -39,7 +39,9 @@ final class StudySoundsTests: XCTestCase {
         XCTAssertNil(StudySoundPolicy.cue(after: .updateSettings(changed.settings), previous: previous, updated: changed))
         var enabled = changed; enabled.settings.sound = true
         XCTAssertNil(StudySoundPolicy.cue(after: .updateSettings(enabled.settings), previous: enabled, updated: enabled))
-        XCTAssertEqual(StudySoundPolicy.cue(after: .updateSettings(enabled.settings), previous: changed, updated: enabled), .save)
+        XCTAssertNil(StudySoundPolicy.cue(after: .updateSettings(enabled.settings), previous: changed, updated: enabled))
+        var profileChanged = enabled; profileChanged.profile = StudentProfile()
+        XCTAssertNil(StudySoundPolicy.cue(after: .updateProfile(profileChanged.profile!), previous: enabled, updated: profileChanged))
     }
 
     func testCompletionSoundOnlyOnTransitionIntoCompletedLesson() {

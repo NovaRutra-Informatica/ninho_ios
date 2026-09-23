@@ -164,7 +164,6 @@ final class StudyLibraryTests: XCTestCase, @unchecked Sendable {
         for (name, bytes) in try payloads(windowsZIP()) where name.hasPrefix("materials/") {
             XCTAssertEqual(files.first { $0.0 == name }?.1, bytes)
         }
-        // Optional handoff to the Windows backup reader.
         if let destination = ProcessInfo.processInfo.environment["NINHO_INTEROP_OUTPUT"] {
             try FileManager.default.copyItem(at: exported, to: URL(fileURLWithPath: destination))
         }

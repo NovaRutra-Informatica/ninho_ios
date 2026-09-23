@@ -3,6 +3,29 @@ import XCTest
 @testable import NinhoCore
 
 final class StudyEngineTests: XCTestCase {
+    func testReviewRefreshUsesNextEligibleDueDateAndThenLocalMidnight() throws {
+        var state = fixture()
+        var waiting = card("waiting"); waiting.dueAt = StudyEngine.timestamp(now.addingTimeInterval(15))
+        var suspended = card("suspended"); suspended.suspended = true; suspended.dueAt = StudyEngine.timestamp(now.addingTimeInterval(2))
+        var other = card("other", subject: "cc", lesson: "cc-00"); other.dueAt = StudyEngine.timestamp(now.addingTimeInterval(1))
+        state.cards = [card(), waiting, suspended, other]
+        XCTAssertEqual(StudyEngine.nextReviewRefresh(in: state, after: now, subjectId: "db", calendar: utc), now.addingTimeInterval(15))
+        XCTAssertEqual(StudyEngine.nextReviewRefresh(in: state, after: now.addingTimeInterval(16), subjectId: "db", calendar: utc), StudyEngine.parseTimestamp("2026-09-15T00:00:00Z"))
+        var calendar = utc; calendar.timeZone = try XCTUnwrap(TimeZone(identifier: "America/New_York"))
+        let dstMorning = try XCTUnwrap(StudyEngine.parseTimestamp("2026-03-08T05:00:00Z"))
+        XCTAssertEqual(StudyEngine.nextReviewRefresh(in: AppState(), after: dstMorning, calendar: calendar), dstMorning.addingTimeInterval(23 * 3600))
+    }
+
+    func testOverviewAggregatesEachSubjectWithoutFutureOrForeignMinutes() {
+        var state = fixture()
+        state.sessions = [StudySession(id: "one", subjectId: "db", durationMinutes: 25, completedAt: instant),
+                          StudySession(id: "two", subjectId: "cc", durationMinutes: 40, completedAt: instant),
+                          StudySession(id: "future", subjectId: "db", durationMinutes: 100, completedAt: StudyEngine.timestamp(now.addingTimeInterval(1)))]
+        let result = StudyEngine.overview(in: state, at: now, calendar: utc)
+        XCTAssertEqual(result.todayMinutes, 65)
+        XCTAssertEqual(result.subjects.first { $0.subjectId == "db" }?.studyMinutes, 25)
+        XCTAssertEqual(result.subjects.first { $0.subjectId == "cc" }?.studyMinutes, 40)
+    }
     private let instant = "2026-09-14T12:00:00.000Z"
     private var now: Date { StudyEngine.parseTimestamp(instant)! }
     private var utc: Calendar {

@@ -211,12 +211,15 @@ public struct AppState: Codable, Equatable, Sendable, Identifiable {
     public var materials: [Material]
     public var sessions: [StudySession]
     public var tasks: [StudyTask]
+    public var profile: StudentProfile?
     public init(version: Int = 2, settings: Settings = Settings(), programs: [StudyProgram] = [],
                 subjects: [Subject] = [], courses: [Course] = [], lessons: [Lesson] = [], cards: [ReviewCard] = [],
-                exams: [Exam] = [], materials: [Material] = [], sessions: [StudySession] = [], tasks: [StudyTask] = []) {
+                exams: [Exam] = [], materials: [Material] = [], sessions: [StudySession] = [], tasks: [StudyTask] = [],
+                profile: StudentProfile? = nil) {
         self.version = version; self.settings = settings; self.programs = programs; self.subjects = subjects
         self.courses = courses; self.lessons = lessons; self.cards = cards; self.exams = exams
         self.materials = materials; self.sessions = sessions; self.tasks = tasks
+        self.profile = profile
     }
 }
 
@@ -229,6 +232,7 @@ public enum StudyCommand: Equatable, Sendable {
     case addSession(StudySession)
     case updateMaterial(id: String, subjectId: String? = nil, lessonId: String? = nil, notes: String? = nil)
     case removeMaterial(id: String), addMaterial(Material), updateSettings(Settings)
+    case updateProfile(StudentProfile), completeTutorial(TutorialPage), resetTutorials
 }
 
 public struct LessonStudyStats: Codable, Equatable, Sendable {

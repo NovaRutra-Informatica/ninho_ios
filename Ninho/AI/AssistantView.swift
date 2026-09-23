@@ -2,267 +2,76 @@ import SwiftUI
 import NinhoCore
 
 @MainActor struct AssistantView: View {
+    @EnvironmentObject private var store: NinhoStore
     let state: AppState
-    @StateObject private var model: LocalAssistantModel
-    @State private var draft = ""
-    @State private var subjectID = ""
-    @Environment(\.scenePhase) private var scenePhase
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @FocusState private var composerFocused: Bool
-    private let green = NinhoStyle.green
-
-    init(state: AppState) {
-        self.state = state
-        let arguments = ProcessInfo.processInfo.arguments
-        let disableForUITests = arguments.contains("--uitesting") && arguments.contains("--disable-ai")
-        _model = StateObject(wrappedValue: LocalAssistantModel(
-            client: disableForUITests ? UnavailableAssistantClient(reason: .modelNotReady) : nil
-        ))
-    }
-
-    init(state: AppState, model: LocalAssistantModel) {
-        self.state = state
-        _model = StateObject(wrappedValue: model)
-    }
-
-    private var questionTooLong: Bool { draft.utf8.count > AssistantContextBuilder.maximumQuestionBytes }
-    private var motionReduced: Bool { reduceMotion || state.settings.reducedMotion }
-
     var body: some View {
-        ScrollViewReader { scroll in
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 20) {
-                    introduction
-                    availabilityCard
-                    if model.availability.isAvailable { subjectPicker }
-                    if model.messages.isEmpty && model.availability.isAvailable { starters }
-                    ForEach(model.messages) { message in
-                        messageBubble(message)
-                    }
-                    if model.isResponding {
-                        HStack(spacing: 10) {
-                            ProgressView().tint(green)
-                            Text("A Íris está pensando no seu iPhone…")
-                                .font(.body)
-                        }
-                        .accessibilityElement(children: .combine)
-                        .accessibilityIdentifier("assistant.generating")
-                    }
-                    if let error = model.error {
-                        VStack(alignment: .leading, spacing: 12) {
-                            Label(error, systemImage: "exclamationmark.bubble")
-                                .font(.body)
-                                .foregroundStyle(.primary)
-                            if model.retryQuestion != nil {
-                                Button("Tentar novamente") {
-                                    model.retry(state: state, subjectID: subjectID.isEmpty ? nil : subjectID)
-                                }
-                                .buttonStyle(.bordered)
-                                .disabled(model.isResponding || !model.availability.isAvailable)
-                                .accessibilityIdentifier("assistant.retry")
-                            }
-                        }
-                        .padding(16)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 20))
-                        .accessibilityIdentifier("assistant.error")
-                    } else if model.retryQuestion != nil && !model.isResponding {
-                        Button("Continuar de onde parei") {
-                            model.retry(state: state, subjectID: subjectID.isEmpty ? nil : subjectID)
-                        }
-                        .buttonStyle(.bordered)
-                        .disabled(!model.availability.isAvailable)
-                    }
-                    if !model.notice.isEmpty {
-                        Text(model.notice)
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                            .accessibilityIdentifier("assistant.context")
-                    }
-                    Color.clear.frame(height: 1).id("conversation-end")
-                }
-                .padding(20)
-            }
-            .scrollDismissesKeyboard(.interactively)
-            .onChange(of: model.messages.count) {
-                withAnimation(motionReduced ? nil : .easeOut(duration: 0.25)) {
-                    scroll.scrollTo("conversation-end", anchor: .bottom)
-                }
-            }
-            .onChange(of: model.isResponding) {
-                if !model.isResponding {
-                    withAnimation(motionReduced ? nil : .easeOut(duration: 0.25)) {
-                        scroll.scrollTo("conversation-end", anchor: .bottom)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 24) {
+                HStack(alignment: .center, spacing: 20) {
+                    Image("owl").renderingMode(.original).resizable().scaledToFit().frame(width: 92, height: 112).accessibilityHidden(true)
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Estou aqui para acompanhar seu caminho.").font(.system(.title2, design: .serif))
+                        Text("A cada estudo registrado, um próximo passo mais próximo de você.").foregroundStyle(.secondary)
                     }
                 }
-            }
-        }
-        .background(Color(.systemGroupedBackground))
-        .safeAreaInset(edge: .bottom) { composer }
-        .navigationTitle("Minha assistente")
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                Button("Nova conversa", systemImage: "square.and.pencil") {
-                    model.newConversation(); draft = ""
-                }
-                .accessibilityIdentifier("assistant.newConversation")
-            }
-        }
-        .tint(green)
-        .task { model.refreshAvailability() }
-        .onDisappear { model.deactivate() }
-        .onChange(of: scenePhase) {
-            if scenePhase == .active { model.refreshAvailability() }
-            else { model.deactivate() }
-        }
-        .onChange(of: state.subjects.map(\.id)) {
-            if !subjectID.isEmpty && !state.subjects.contains(where: { $0.id == subjectID }) { subjectID = "" }
-        }
-        .accessibilityIdentifier("screen.assistant")
+                Label("Análise local embutida · sempre offline", systemImage: "leaf")
+                    .font(.subheadline.weight(.medium)).foregroundStyle(NinhoStyle.green).accessibilityIdentifier("assistant.embedded")
+                AssistantIdentityCard()
+                if store.mentor.generatedAt == nil { ProgressView("Organizando seus registros…") }
+                ForEach(store.mentor.suggestions) { suggestion in MentorSuggestionCard(suggestion: suggestion) }
+                VStack(alignment: .leading, spacing: 15) {
+                    Label("Um plano que cabe na sua vida", systemImage: "calendar").font(.headline)
+                    Text(store.mentor.plan).font(.body).textSelection(.enabled)
+                    NavigationLink { ProfileView(onboarding: false) } label: { Label("Ajustar meu perfil e preferências", systemImage: "person.crop.circle") }
+                        .buttonStyle(.bordered).accessibilityIdentifier("assistant.profile")
+                }.ninhoCard()
+                VStack(alignment: .leading, spacing: 12) {
+                    Label("De onde vêm as sugestões", systemImage: "chart.bar").font(.headline)
+                    Text(store.mentor.sampleDescription).font(.subheadline)
+                    Text("Dificuldades usam as avaliações que você marcou, com suavização e um mínimo de 8 respostas em 3 cartões. Horários habituais exigem 6 inícios de foco em 3 dias. Poucos dados não viram conclusões sobre você.").font(.subheadline).foregroundStyle(.secondary)
+                    Text("A análise é estatística e está incluída no aplicativo. Não é um modelo de linguagem, não lê PDFs automaticamente e não mede atenção, domínio ou seu uso de outros aplicativos.").font(.footnote).foregroundStyle(.secondary)
+                }.ninhoCard()
+                VStack(alignment: .leading, spacing: 12) {
+                    Label("Seu uso do Ninho", systemImage: "iphone").font(.headline)
+                    Text("\(store.mentor.visits) visitas a telas · \(Int(store.mentor.activeMinutes)) min com o aplicativo ativo")
+                    Text("Agregados locais dos últimos 90 dias. Esse tempo fica separado das sessões de estudo, não entra na sua meta e não indica aprendizado. Para ao sair do Ninho ou após 60 segundos sem interação. Você pode desligar ou apagar os registros no perfil.").font(.footnote).foregroundStyle(.secondary)
+                    if !store.activityNotice.isEmpty { Text(store.activityNotice).font(.footnote).foregroundStyle(.secondary) }
+                }.ninhoCard()
+            }.padding(20)
+        }.background(NinhoStyle.canvas).navigationTitle("Minha assistente").navigationBarTitleDisplayMode(.inline)
+            .accessibilityIdentifier("screen.assistant").ninhoTutorial(.assistant)
+            .onAppear { store.refreshOverview() }
     }
+}
 
-    private var introduction: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack(spacing: 14) {
-                Image(systemName: "sparkles")
-                    .font(.system(size: 27, weight: .medium))
-                    .foregroundStyle(green)
-                    .frame(width: 62, height: 62)
-                    .background(green.opacity(0.10), in: RoundedRectangle(cornerRadius: 22))
-                    .accessibilityHidden(true)
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Oi, eu sou a Íris.").font(.title2.bold())
-                    Text("Vamos dar o próximo passo?").font(.body).foregroundStyle(.secondary)
-                }
-            }
-            Text("Converse sobre seus estudos, organize uma revisão ou peça uma explicação curta. Uso os registros do Ninho para ajudar você a escolher por onde começar.")
-                .font(.body)
-            Text("A IA pode errar. Cartões praticados e tempo de estudo mostram o que você registrou; não são uma medida de domínio.")
-                .font(.subheadline).foregroundStyle(.secondary)
-        }
-        .padding(20)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 26))
+struct MentorSuggestionCard: View {
+    let suggestion: MentorSuggestion
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Label(suggestion.confidence, systemImage: "sparkles").font(.caption.weight(.semibold)).foregroundStyle(NinhoStyle.green)
+            Text(suggestion.title).font(.system(.title3, design: .rounded, weight: .semibold))
+            Text(suggestion.detail).font(.body)
+            Text(suggestion.evidence).font(.footnote).foregroundStyle(.secondary)
+            NavigationLink { destination } label: { Label(actionLabel, systemImage: "arrow.right").frame(maxWidth: .infinity) }
+                .buttonStyle(.bordered).accessibilityIdentifier("assistant.action.\(suggestion.id)")
+        }.frame(maxWidth: .infinity, alignment: .leading).ninhoCard()
     }
-
-    @ViewBuilder private var availabilityCard: some View {
-        switch model.availability {
-        case .checking:
-            HStack(spacing: 10) {
-                ProgressView()
-                Text("Conferindo a IA local…").font(.body)
-            }
-        case .available:
-            VStack(alignment: .leading, spacing: 6) {
-                Label("IA da Apple · neste iPhone", systemImage: "iphone.gen3.radiowaves.left.and.right")
-                    .font(.subheadline.weight(.semibold)).foregroundStyle(green)
-                Text("O Ninho não envia esta conversa ao PC ou a um servidor. O histórico é temporário e fica só nesta tela.")
-                    .font(.subheadline).foregroundStyle(.secondary)
-            }
-            .accessibilityIdentifier("assistant.available")
-        case .unavailable(let reason):
-            VStack(alignment: .leading, spacing: 14) {
-                Label("A conversa local ainda não está disponível", systemImage: "sparkles.rectangle.stack")
-                    .font(.headline)
-                Text(reason.message).font(.body)
-                Button("Verificar novamente") { model.refreshAvailability() }
-                    .buttonStyle(.bordered)
-                    .accessibilityIdentifier("assistant.refreshAvailability")
-            }
-            .padding(18)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 22))
-            .accessibilityIdentifier("assistant.unavailable")
+    private var actionLabel: String {
+        switch suggestion.route {
+        case .reviews: "Abrir revisões"
+        case .agenda: "Ver minha agenda"
+        case .profile: "Ajustar meu perfil"
+        case .studies: "Retomar meus estudos"
+        default: "Preparar um foco"
         }
     }
-
-    private var subjectPicker: some View {
-        Picker("Foco da conversa", selection: $subjectID) {
-            Text("Todas as matérias").tag("")
-            ForEach(state.subjects, id: \.id) { subject in
-                Text(subject.name).tag(subject.id)
-            }
-        }
-        .pickerStyle(.menu)
-        .disabled(model.isResponding)
-        .accessibilityIdentifier("assistant.subject")
-    }
-
-    private var starters: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Um começo simples").font(.headline)
-            ForEach(["O que vale revisar hoje?", "Monte um plano curto para meu próximo estudo.", "Como diferenciar revisar de estudar de novo?"], id: \.self) { question in
-                Button { send(question) } label: {
-                    HStack(alignment: .center, spacing: 12) {
-                        Text(question).font(.body).multilineTextAlignment(.leading)
-                        Spacer(minLength: 8)
-                        Image(systemName: "arrow.up.right")
-                    }
-                    .padding(16)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 18))
-                }
-                .buttonStyle(.plain)
-                .disabled(model.isResponding)
-            }
-        }
-    }
-
-    private func messageBubble(_ message: AssistantMessage) -> some View {
-        VStack(alignment: .leading, spacing: 7) {
-            Text(message.role == .user ? "Você" : "Íris")
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(message.role == .user ? Color.white.opacity(0.88) : green)
-            Text(message.content).font(.body).textSelection(.enabled)
-        }
-        .padding(17)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .foregroundStyle(message.role == .user ? .white : Color.primary)
-        .background(message.role == .user ? green : Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 22))
-        .padding(message.role == .user ? .leading : .trailing, 20)
-        .accessibilityElement(children: .combine)
-        .accessibilityIdentifier("assistant.message.\(message.role.rawValue)")
-    }
-
-    private var composer: some View {
-        VStack(spacing: 10) {
-            if questionTooLong {
-                Text("A pergunta ficou longa. Divida em partes menores.")
-                    .font(.subheadline).foregroundStyle(.secondary)
-            }
-            HStack(alignment: .bottom, spacing: 12) {
-                TextField("Pergunte à Íris", text: $draft, axis: .vertical)
-                    .font(.body)
-                    .lineLimit(1...5)
-                    .focused($composerFocused)
-                    .submitLabel(.send)
-                    .onSubmit { send(draft) }
-                    .disabled(!model.availability.isAvailable || model.isResponding)
-                    .accessibilityIdentifier("assistant.prompt")
-                if model.isResponding {
-                    Button("Cancelar", systemImage: "stop.fill") { model.cancel() }
-                        .labelStyle(.iconOnly)
-                        .buttonStyle(.bordered)
-                        .accessibilityIdentifier("assistant.cancel")
-                } else {
-                    Button("Enviar", systemImage: "arrow.up") { send(draft) }
-                        .labelStyle(.iconOnly)
-                        .buttonStyle(.borderedProminent)
-                        .disabled(!model.availability.isAvailable || draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || questionTooLong)
-                        .accessibilityIdentifier("assistant.send")
-                }
-            }
-            .padding(14)
-            .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 22))
-        }
-        .padding(.horizontal, 16).padding(.vertical, 10)
-        .background(.bar)
-    }
-
-    private func send(_ question: String) {
-        if model.send(question, state: state, subjectID: subjectID.isEmpty ? nil : subjectID) {
-            draft = ""; composerFocused = false
+    @ViewBuilder private var destination: some View {
+        switch suggestion.route {
+        case .reviews: ReviewsView()
+        case .agenda: AgendaView()
+        case .profile: ProfileView(onboarding: false)
+        case .studies: StudiesView()
+        default: FocusView(subjectID: suggestion.subjectID)
         }
     }
 }

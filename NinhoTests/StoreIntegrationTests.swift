@@ -4,6 +4,107 @@ import NinhoCore
 @testable import Ninho
 
 @MainActor final class StoreIntegrationTests: XCTestCase {
+    func testOnlyForegroundInteractionTimeCountsAndIdleNeverBackfills() async throws {
+        let root = temporaryRoot(); defer { try? FileManager.default.removeItem(at: root) }
+        let library = StudyLibrary(root: root); _ = try await library.load(seed: fixture())
+        let clock = StoreTestClock(Date())
+        let store = NinhoStore(library: library, now: { clock.date }, uptime: { clock.uptime })
+        await store.start(); store.showRoute(.studies, token: UUID())
+        clock.uptime = 120; clock.date += 120
+        store.recordInteraction() // The previous 120 s must contribute only the 60 s active window.
+        clock.uptime = 125; clock.date += 5; await store.flushActivity()
+        store.setAppActive(false)
+        clock.uptime = 3725; clock.date += 3600; await store.flushActivity()
+        let storedUsage = try await library.loadAuxiliary(LocalActivity.self, name: "activity.json")
+        let usage = try XCTUnwrap(storedUsage)
+        XCTAssertEqual(usage.days.reduce(0) { $0 + ($1.routes["studies"]?.seconds ?? 0) }, 65, accuracy: 0.01)
+        XCTAssertTrue(store.state.sessions.isEmpty)
+        store.setAppActive(true); clock.uptime += 5; clock.date += 5; await store.flushActivity()
+        let storedResumed = try await library.loadAuxiliary(LocalActivity.self, name: "activity.json")
+        let resumed = try XCTUnwrap(storedResumed)
+        XCTAssertEqual(resumed.days.reduce(0) { $0 + ($1.routes["studies"]?.seconds ?? 0) }, 70, accuracy: 0.01)
+    }
+
+    func testNavigationCanBeDisabledAndClearedWithoutDeletingStudyData() async throws {
+        let root = temporaryRoot(); defer { try? FileManager.default.removeItem(at: root) }
+        let library = StudyLibrary(root: root); _ = try await library.load(seed: fixture())
+        let store = NinhoStore(library: library); await store.start()
+        store.showRoute(.studies, token: UUID()); await store.flushActivity()
+        await store.setNavigationTracking(false); let before = store.state
+        await store.clearLocalActivity()
+        let storedUsage = try await library.loadAuxiliary(LocalActivity.self, name: "activity.json")
+        let usage = try XCTUnwrap(storedUsage)
+        XCTAssertFalse(usage.trackingEnabled); XCTAssertTrue(usage.days.isEmpty)
+        XCTAssertEqual(store.state, before)
+    }
+
+    func testCorruptUsageCannotBlockStudiesOrOverwriteOriginalBytes() async throws {
+        let root = temporaryRoot(); defer { try? FileManager.default.removeItem(at: root) }
+        let library = StudyLibrary(root: root); _ = try await library.load(seed: fixture())
+        let path = try currentFolder(root).appendingPathComponent("activity.json")
+        let bytes = Data("invalid usage".utf8); try bytes.write(to: path)
+        let store = NinhoStore(library: library); await store.start()
+        XCTAssertTrue(store.loaded); XCTAssertFalse(store.activityNotice.isEmpty)
+        store.showRoute(.today, token: UUID()); await store.flushActivity()
+        XCTAssertEqual(try Data(contentsOf: path), bytes)
+        let saved = await store.perform(.updateLesson(id: "test-lesson", notes: "Preservado"))
+        XCTAssertTrue(saved)
+    }
+
+    func testBackgroundStopsAnalysisAndForegroundUsesLatestState() async throws {
+        let root = temporaryRoot(); defer { try? FileManager.default.removeItem(at: root) }
+        let library = StudyLibrary(root: root); _ = try await library.load(seed: fixture())
+        let store = NinhoStore(library: library); await store.start()
+        try await waitUntil { store.overviewRevision == store.revision }
+        let version = store.overviewRevision
+        store.setAppActive(false)
+        _ = await store.perform(.updateLesson(id: "test-lesson", status: .done))
+        XCTAssertEqual(store.overviewRevision, version)
+        store.setAppActive(true)
+        try await waitUntil { store.overviewRevision == store.revision }
+        XCTAssertEqual(store.overview.lessonsDone, 1)
+        XCTAssertNotNil(store.mentor.generatedAt)
+    }
+    func testAutosaveCoalescesSettingsAndPersistsWithoutSaveButton() async throws {
+        let root = temporaryRoot(); defer { try? FileManager.default.removeItem(at: root) }
+        let library = StudyLibrary(root: root)
+        _ = try await library.load(seed: fixture())
+        let store = NinhoStore(library: library); await store.start()
+        var settings = store.state.settings
+        settings.name = "Primeiro nome"; store.queueSettings(settings)
+        settings.name = "Nome final"; settings.theme = .dark; settings.sound = false; store.queueSettings(settings)
+        await store.flushPreferences()
+        XCTAssertFalse(store.hasPendingPreferences)
+        let reopened = try await StudyLibrary(root: root).load()
+        XCTAssertEqual(reopened.settings.name, "Nome final"); XCTAssertEqual(reopened.settings.theme, .dark)
+    }
+
+    func testInvalidAutosaveRemainsPendingUntilCorrected() async throws {
+        let root = temporaryRoot(); defer { try? FileManager.default.removeItem(at: root) }
+        let library = StudyLibrary(root: root)
+        _ = try await library.load(seed: fixture())
+        let store = NinhoStore(library: library); await store.start()
+        var settings = store.state.settings; settings.name = ""
+        store.queueSettings(settings); await store.flushPreferences()
+        XCTAssertTrue(store.hasPendingPreferences)
+        XCTAssertEqual(store.state.settings.name, "Teste")
+        settings.name = "Corrigido"; store.queueSettings(settings); await store.flushPreferences()
+        XCTAssertFalse(store.hasPendingPreferences); XCTAssertEqual(store.state.settings.name, "Corrigido")
+    }
+    func testOverviewEventuallyReflectsLatestPersistedSnapshot() async throws {
+        let root = temporaryRoot(); defer { try? FileManager.default.removeItem(at: root) }
+        let library = StudyLibrary(root: root)
+        _ = try await library.load(seed: fixture())
+        let store = NinhoStore(library: library)
+        await store.start()
+        try await waitUntil { store.overview.totalLessons == 1 }
+        _ = await store.perform(.updateLesson(id: "test-lesson", status: .done))
+        _ = await store.perform(.updateLesson(id: "test-lesson", status: .inProgress))
+        try await waitUntil { store.overviewRevision == store.revision }
+        XCTAssertEqual(store.state.lessons.first?.status, .inProgress)
+        XCTAssertEqual(store.overview.totalLessons, 1)
+        XCTAssertEqual(store.overview.lessonsDone, 0)
+    }
     private func fixture() -> AppState {
         AppState(settings: Settings(name: "Teste", sound: false),
                  programs: [StudyProgram(id: "test-program", name: "Curso de teste")],
@@ -275,6 +376,7 @@ import NinhoCore
 
 @MainActor private final class StoreTestClock {
     var date: Date
+    var uptime: TimeInterval = 0
     init(_ date: Date) { self.date = date }
 }
 
