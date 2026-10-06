@@ -74,9 +74,19 @@ struct CardLibraryView: View {
     @State private var editing: ReviewCard?
     @State private var deleting: ReviewCard?
     @State private var search = ""
+    @State private var results: [ReviewCard] = []
+    @State private var loading = true
+    @State private var loadedSearch = ""
+    private struct Query: Hashable {
+        let revision: Int
+        let subject: String
+        let lesson: String
+        let text: String
+    }
     var body: some View {
         List {
-            ForEach(store.state.cards.filter { (subjectID.isEmpty || $0.subjectId == subjectID) && (lessonID.isEmpty || $0.lessonId == lessonID) && (search.isEmpty || $0.question.localizedCaseInsensitiveContains(search)) }) { card in
+            if loading && results.isEmpty { ProgressView("Organizando seus cartões…") }
+            ForEach(results) { card in
                 VStack(alignment: .leading, spacing: 10) {
                     Button { editing = card } label: { Text(card.question).font(.headline).foregroundStyle(.primary).frame(maxWidth: .infinity, alignment: .leading) }
                     Text(card.suspended ? "Pausado" : "Próxima revisão: \(StudyEngine.parseTimestamp(card.dueAt)?.formatted(date: .abbreviated, time: .omitted) ?? card.dueAt)").font(.body).foregroundStyle(.secondary)
@@ -93,6 +103,23 @@ struct CardLibraryView: View {
             }
             Button("Novo cartão", systemImage: "plus.circle") { adding = true }.accessibilityIdentifier("add.card")
         }.navigationTitle("Meus cartões").searchable(text: $search, prompt: "Buscar pergunta")
+            .task(id: Query(revision: store.revision, subject: subjectID, lesson: lessonID, text: search)) {
+                let cards = store.state.cards, subject = subjectID, lesson = lessonID, text = search
+                loading = true
+                do {
+                    if !text.isEmpty && text != loadedSearch { try await Task.sleep(for: .milliseconds(150)) }
+                    try Task.checkCancellation()
+                    let worker = Task.detached(priority: .userInitiated) {
+                        try CardLibraryQuery.search(cards, subjectID: subject, lessonID: lesson, text: text)
+                    }
+                    let matches = try await withTaskCancellationHandler { try await worker.value } onCancel: { worker.cancel() }
+                    try Task.checkCancellation()
+                    results = matches; loadedSearch = text; loading = false
+                } catch is CancellationError {
+                } catch {
+                    loading = false
+                }
+            }
             .sheet(isPresented: $adding) { CardEditor(subjectID: subjectID.isEmpty ? store.state.subjects.first?.id ?? "" : subjectID, lessonID: lessonID) }
             .sheet(item: $editing) { CardEditor(subjectID: $0.subjectId, lessonID: $0.lessonId ?? "", original: $0) }
             .confirmationDialog("Excluir este cartão e seu histórico?", isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } }), titleVisibility: .visible) { Button("Excluir", role: .destructive) { if let card = deleting { Task { await store.perform(.deleteCard(id: card.id)) }; deleting = nil } } }

@@ -201,6 +201,13 @@ import NinhoCore
             if let index = arguments.firstIndex(of: "--test-review-due-seconds"), arguments.indices.contains(index + 1), let seconds = Double(arguments[index + 1]), seconds.isFinite, seconds > 0, seconds <= 60 {
                 seed.cards[0].dueAt = StudyEngine.timestamp(Date().addingTimeInterval(seconds))
             }
+            if let index = arguments.firstIndex(of: "--test-card-count"), arguments.indices.contains(index + 1), let count = Int(arguments[index + 1]), (1...5_000).contains(count) {
+                let timestamp = StudyEngine.timestamp(Date())
+                seed.cards = (0..<count).map {
+                    ReviewCard(id: "load-card-\($0)", subjectId: "test-subject", lessonId: "test-lesson",
+                               question: "Pergunta de carga \($0)", answer: "Resposta sintética \($0)", createdAt: timestamp)
+                }
+            }
             return seed
         }
         guard let url = Bundle.main.url(forResource: "seed-state", withExtension: "json") else { throw LibraryError.invalid("O catálogo inicial não foi incluído no aplicativo.") }

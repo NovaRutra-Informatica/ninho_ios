@@ -3,6 +3,37 @@ import XCTest
 @testable import NinhoCore
 
 final class StudyEngineTests: XCTestCase {
+    func testReviewOrderUsesInstantsAcrossOffsetsWithStableTies() {
+        var state = fixture()
+        func reviewed(_ id: String, due: String, lapses: Int = 0) -> ReviewCard {
+            var item = card(id)
+            item.dueAt = due; item.lastReviewedAt = "2026-09-01T12:00:00Z"
+            item.repetitions = 3; item.lapses = lapses
+            return item
+        }
+        state.cards = [reviewed("b", due: "2026-09-14T09:00:00-03:00"),
+                       reviewed("a", due: "2026-09-14T12:00:00.000Z"),
+                       reviewed("lapse", due: "2026-09-14T14:00:00+02:00", lapses: 2),
+                       reviewed("older", due: "2026-09-14T12:59:59.900+01:00")]
+        XCTAssertEqual(StudyEngine.dueCards(in: state, at: now, calendar: utc).map(\.id), ["older", "lapse", "a", "b"])
+        XCTAssertEqual(StudyEngine.dueCards(in: state, at: now, limit: 2, calendar: utc).map(\.id), ["older", "lapse"])
+    }
+
+    func testScopedTimestampParserPreservesStrictnessAfterFormatChangesAndCacheCapacity() {
+        let parser = StudyTimestampParser()
+        for value in ["2026-09-14T09:00:00-03:00", "2026-09-14T12:00:00.000Z", "2026-09-14T14:00:00+02:00"] {
+            XCTAssertEqual(parser.parse(value), now)
+        }
+        for value in ["2026-02-30T12:00:00Z", "2026-09-14T25:00:00Z", "2026-09-14T12:00:00.000", "2026-09-14T12:00:00Z "] {
+            XCTAssertNil(parser.parse(value), value)
+        }
+        for offset in 0..<4_100 {
+            let date = now.addingTimeInterval(Double(offset))
+            XCTAssertEqual(parser.parse(StudyEngine.timestamp(date)), date)
+        }
+        XCTAssertEqual(parser.parse(instant), now)
+    }
+
     func testReviewRefreshUsesNextEligibleDueDateAndThenLocalMidnight() throws {
         var state = fixture()
         var waiting = card("waiting"); waiting.dueAt = StudyEngine.timestamp(now.addingTimeInterval(15))

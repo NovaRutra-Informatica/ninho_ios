@@ -13,13 +13,12 @@ public enum StudyEngine {
     }
 
     public static func parseTimestamp(_ value: String) -> Date? {
-        guard matches(value, #"^\d{4}-\d{2}-\d{2}T(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z|[+-](?:[01]\d|2[0-3]):[0-5]\d)$"#),
-              calendarDay(String(value.prefix(10)), yearRange: 1...9999) != nil else { return nil }
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        if let date = formatter.date(from: value) { return date }
-        formatter.formatOptions = [.withInternetDateTime]
-        return formatter.date(from: value)
+        StudyTimestampParser().parse(value)
+    }
+
+    fileprivate static func validTimestamp(_ value: String) -> Bool {
+        matches(value, #"^\d{4}-\d{2}-\d{2}T(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z|[+-](?:[01]\d|2[0-3]):[0-5]\d)$"#) &&
+            calendarDay(String(value.prefix(10)), yearRange: 1...9999) != nil
     }
 
     public static func localDate(_ date: Date = Date(), calendar: Calendar = .current) -> String {
@@ -79,11 +78,10 @@ public enum StudyEngine {
         let subjects = Set(state.subjects.map(\.id))
         let courses = Dictionary(uniqueKeysWithValues: state.courses.map { ($0.id, $0) })
         let lessons = Dictionary(uniqueKeysWithValues: state.lessons.map { ($0.id, $0) })
-        var dates: [String: Date] = [:]
+        let dates = StudyTimestampParser()
         func date(_ text: String) throws -> Date {
-            if let cached = dates[text] { return cached }
-            guard let parsed = parseTimestamp(text) else { throw StudyError.invalid("Data e horário inválidos.") }
-            dates[text] = parsed; return parsed
+            guard let parsed = dates.parse(text) else { throw StudyError.invalid("Data e horário inválidos.") }
+            return parsed
         }
         func subject(_ id: String, optional: Bool = false) throws {
             try check(validID(id, optional: optional) && ((optional && id.isEmpty) || subjects.contains(id)), "A matéria vinculada não existe.")
@@ -252,26 +250,31 @@ public enum StudyEngine {
     }
 
     public static func dueCards(in state: AppState, at now: Date = Date(), limit: Int? = nil, subjectId: String? = nil, calendar: Calendar = .current) -> [ReviewCard] {
+        dueCards(in: state, at: now, limit: limit, subjectId: subjectId, calendar: calendar, dates: StudyTimestampParser())
+    }
+
+    private static func dueCards(in state: AppState, at now: Date, limit: Int? = nil, subjectId: String? = nil, calendar: Calendar, dates: StudyTimestampParser) -> [ReviewCard] {
         let today = localDate(now, calendar: calendar)
         let firstReviews = state.sessions.filter { $0.kind == .review && $0.id.hasPrefix("review:first:") }
         let tracked = Set(firstReviews.map { String($0.id.dropFirst("review:first:".count)) })
-        let used = firstReviews.filter { parseTimestamp($0.completedAt).map { localDate($0, calendar: calendar) == today } ?? false }.count
+        let used = firstReviews.filter { dates.parse($0.completedAt).map { localDate($0, calendar: calendar) == today } ?? false }.count
         let legacy = state.cards.filter { card in
-            !tracked.contains(card.id) && card.repetitions == 1 && (card.lastReviewedAt.flatMap(parseTimestamp).map { localDate($0, calendar: calendar) == today } ?? false)
+            !tracked.contains(card.id) && card.repetitions == 1 && (card.lastReviewedAt.flatMap(dates.parse).map { localDate($0, calendar: calendar) == today } ?? false)
         }.count
         let available = max(0, state.settings.newCardsPerDay - used - legacy)
-        let candidates = state.cards.filter { !$0.suspended && (subjectId == nil || subjectId == $0.subjectId) && (parseTimestamp($0.dueAt) ?? .distantFuture) <= now }
-        let reviews = candidates.filter { $0.lastReviewedAt != nil }.sorted {
-            let first = parseTimestamp($0.dueAt) ?? .distantFuture, second = parseTimestamp($1.dueAt) ?? .distantFuture
-            if first != second { return first < second }
-            if $0.lapses != $1.lapses { return $0.lapses > $1.lapses }
-            return $0.id < $1.id
+        var reviews: [(card: ReviewCard, date: Date)] = [], fresh: [(card: ReviewCard, date: Date)] = []
+        for card in state.cards where !card.suspended && (subjectId == nil || subjectId == card.subjectId) {
+            guard let due = dates.parse(card.dueAt), due <= now else { continue }
+            if card.lastReviewedAt != nil { reviews.append((card, due)) }
+            else if available > 0 { fresh.append((card, dates.parse(card.createdAt) ?? .distantFuture)) }
         }
-        let fresh = candidates.filter { $0.lastReviewedAt == nil }.sorted {
-            let first = parseTimestamp($0.createdAt) ?? .distantFuture, second = parseTimestamp($1.createdAt) ?? .distantFuture
-            return first == second ? $0.id < $1.id : first < second
+        reviews.sort {
+            if $0.date != $1.date { return $0.date < $1.date }
+            if $0.card.lapses != $1.card.lapses { return $0.card.lapses > $1.card.lapses }
+            return $0.card.id < $1.card.id
         }
-        let result = reviews + Array(fresh.prefix(available))
+        fresh.sort { $0.date == $1.date ? $0.card.id < $1.card.id : $0.date < $1.date }
+        let result = reviews.map(\.card) + fresh.prefix(available).map(\.card)
         return limit.map { Array(result.prefix(max(0, $0))) } ?? result
     }
 
@@ -286,18 +289,20 @@ public enum StudyEngine {
     }
 
     public static func nextReviewRefresh(in state: AppState, after now: Date, subjectId: String? = nil, calendar: Calendar = .current) -> Date {
+        let dates = StudyTimestampParser()
         var next = calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: now)) ?? now.addingTimeInterval(3600)
         for card in state.cards where !card.suspended && (subjectId == nil || card.subjectId == subjectId) {
-            if let due = parseTimestamp(card.dueAt), due > now, due < next { next = due }
+            if let due = dates.parse(card.dueAt), due > now, due < next { next = due }
         }
         return next
     }
 
     public static func overview(in state: AppState, at now: Date = Date(), calendar: Calendar = .current) -> StudyOverview {
-        let today = localDate(now, calendar: calendar), due = dueCards(in: state, at: now, calendar: calendar)
+        let dates = StudyTimestampParser()
+        let today = localDate(now, calendar: calendar), due = dueCards(in: state, at: now, calendar: calendar, dates: dates)
         var minutes: [String: Double] = [:], subjectMinutes: [String: Double] = [:], active = Set<String>()
         for session in state.sessions {
-            guard let completed = parseTimestamp(session.completedAt), completed <= now else { continue }
+            guard let completed = dates.parse(session.completedAt), completed <= now else { continue }
             let day = localDate(completed, calendar: calendar)
             minutes[day, default: 0] += session.durationMinutes
             subjectMinutes[session.subjectId, default: 0] += session.durationMinutes
@@ -318,7 +323,7 @@ public enum StudyEngine {
         let unsortedInsights: [SubjectInsight] = state.subjects.map { subject -> SubjectInsight in
             let cards = cardsBySubject[subject.id] ?? []
             let practiced = cards.filter { $0.lastReviewedAt != nil }
-            let due = practiced.filter { !$0.suspended && (parseTimestamp($0.dueAt) ?? .distantFuture) <= now }
+            let due = practiced.filter { !$0.suspended && (dates.parse($0.dueAt) ?? .distantFuture) <= now }
             let outdated = cards.filter { $0.flag == .outdated }.count, relearn = cards.filter { $0.flag == .relearn }.count
             let lessons = lessonsBySubject[subject.id] ?? [], done = lessons.filter { $0.status == .done }.count
             let studyMinutes = subjectMinutes[subject.id] ?? 0
@@ -326,7 +331,7 @@ public enum StudyEngine {
             let coverage: Double? = cards.isEmpty ? nil : (Double(practiced.count) / Double(cards.count) * 100).rounded()
             let exam = exams.first { $0.subjectId == subject.id }
             let examDays = exam.map { daysBetween(today, $0.date) }
-            let oldest = due.compactMap { parseTimestamp($0.dueAt) }.map { daysBetween(localDate($0, calendar: calendar), today) }.max() ?? 0
+            let oldest = due.compactMap { dates.parse($0.dueAt) }.min().map { daysBetween(localDate($0, calendar: calendar), today) } ?? 0
             let status: String
             if outdated > 0 { status = "Conferir fonte" }
             else if !due.isEmpty || relearn > 0 { status = "Revisão necessária" }
@@ -356,5 +361,28 @@ public enum StudyEngine {
             "Cobertura é a parcela de cartões praticados. Aulas concluídas são marcações suas.",
             "Atraso sugere uma oportunidade de praticar. Atualização de conteúdo precisa ser conferida na fonte."
         ])
+    }
+}
+
+// Each calculation owns its parsers; concurrent analyses never share mutable formatters or a growing global cache.
+final class StudyTimestampParser {
+    private var dates: [String: Date] = [:]
+    private lazy var fractional: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter
+    }()
+    private lazy var whole: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter
+    }()
+
+    func parse(_ value: String) -> Date? {
+        if let cached = dates[value] { return cached }
+        guard StudyEngine.validTimestamp(value),
+              let date = (value.contains(".") ? fractional : whole).date(from: value) else { return nil }
+        if dates.count < 4_096 { dates[value] = date }
+        return date
     }
 }

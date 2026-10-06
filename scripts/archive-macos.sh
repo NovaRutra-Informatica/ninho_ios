@@ -3,6 +3,11 @@ set -euo pipefail
 source "$(dirname "$0")/common.sh"
 require_xcode
 signing_arguments
+if [[ ! "${NINHO_APP_STORE_ID:-}" =~ ^[1-9][0-9]*$ ]]; then
+  echo "Defina NINHO_APP_STORE_ID com o Apple ID numérico real do Ninho no App Store Connect. Nenhum archive de venda foi criado." >&2
+  exit 2
+fi
+SIGNING_ARGS+=("NINHO_APP_STORE_ID=$NINHO_APP_STORE_ID")
 ARCHIVE="${NINHO_ARCHIVE_PATH:-$IOS_ROOT/build/Ninho-$(date -u +%Y%m%dT%H%M%SZ)-$$.xcarchive}"
 if [[ -e "$ARCHIVE" ]]; then
   echo "O arquivo de destino já existe; escolha outro NINHO_ARCHIVE_PATH." >&2

@@ -68,6 +68,7 @@ def project() -> dict:
         "ENABLE_USER_SCRIPT_SANDBOXING": "YES", "TARGETED_DEVICE_FAMILY": "1", "SUPPORTED_PLATFORMS": "iphoneos iphonesimulator",
         "NINHO_APP_GROUP": "group.com.aless.ninho.ios",
         "NINHO_ICLOUD_CONTAINER": "iCloud.com.aless.ninho.ios",
+        "NINHO_APP_STORE_ID": "",
     }
     target_common = {
         "CODE_SIGN_STYLE": "Automatic", "DEVELOPMENT_TEAM": "", "GENERATE_INFOPLIST_FILE": "YES",

@@ -158,6 +158,7 @@ public enum AdaptiveMentor {
         let reviewed = state.cards.filter { !$0.suspended && $0.lastReviewedAt != nil }
         let reviewedBySubject = Dictionary(grouping: reviewed, by: \.subjectId)
         let sessionsBySubject = Dictionary(grouping: state.sessions.filter { $0.durationMinutes > 0 }, by: \.subjectId)
+        let timestamps = StudyTimestampParser()
         report.sampleDescription = "\(reviewed.count) cartões praticados · \(state.sessions.count) sessões registradas. Cobertura e dificuldade relatada não são medidas de domínio."
         for subject in overview.subjects {
             try Task.checkCancellation()
@@ -175,7 +176,7 @@ public enum AdaptiveMentor {
             if subject.relearnCards > 0 || subject.outdatedCards > 0 {
                 report.suggestions.append(.init(id: "flags-" + subject.subjectId, title: "Confira seus lembretes em \(subject.name)", detail: "Retome os cartões que você sinalizou antes de seguir para mais conteúdo.", evidence: "\(subject.relearnCards) cartões marcados para reaprender e \(subject.outdatedCards) para conferir a fonte. São marcações suas, sem verificação automática do conteúdo.", confidence: "Marcado por você", route: .reviews, subjectID: subject.subjectId))
             }
-            if let latest = (sessionsBySubject[subject.subjectId] ?? []).compactMap({ StudyEngine.parseTimestamp($0.completedAt) }).max() {
+            if let latest = (sessionsBySubject[subject.subjectId] ?? []).compactMap({ timestamps.parse($0.completedAt) }).max() {
                 let gap = calendar.dateComponents([.day], from: calendar.startOfDay(for: latest), to: calendar.startOfDay(for: date)).day ?? 0
                 if gap >= 7 && subject.dueCards == 0 {
                     report.suggestions.append(.init(id: "gap-" + subject.subjectId, title: "Que tal reencontrar \(subject.name)?", detail: "Uma pequena retomada pode ajudar você a decidir o próximo passo.", evidence: "Há \(gap) dias sem sessão de estudo registrada nesta matéria. Você pode ter estudado fora do Ninho; ausência de registro não prova esquecimento.", confidence: "Intervalo nos registros", route: .studies, subjectID: subject.subjectId))

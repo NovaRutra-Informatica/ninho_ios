@@ -4,16 +4,14 @@ import NinhoCore
 
 @main struct NinhoApp: App {
     @StateObject private var store = NinhoStore()
+    @StateObject private var acquisition = AppAcquisitionModel()
     var body: some Scene {
         WindowGroup {
-            NinhoRootView()
+            AppAcquisitionGate { NinhoRootView() }
                 .environmentObject(store)
+                .environmentObject(acquisition)
                 .tint(NinhoStyle.green)
                 .preferredColorScheme(store.displaySettings.theme == .system ? nil : store.displaySettings.theme == .dark ? .dark : .light)
-                .task {
-                    if store.isUITesting { UIApplication.shared.isIdleTimerDisabled = true }
-                    await store.start()
-                }
         }
     }
 }

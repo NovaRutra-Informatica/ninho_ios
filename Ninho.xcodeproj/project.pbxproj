@@ -126,6 +126,7 @@
 				"SUPPORTED_PLATFORMS" = "iphoneos iphonesimulator";
 				"NINHO_APP_GROUP" = "group.com.aless.ninho.ios";
 				"NINHO_ICLOUD_CONTAINER" = "iCloud.com.aless.ninho.ios";
+				"NINHO_APP_STORE_ID" = "";
 				"DEBUG_INFORMATION_FORMAT" = "dwarf";
 				"SWIFT_OPTIMIZATION_LEVEL" = "-Onone";
 				"ENABLE_TESTABILITY" = "YES";
@@ -153,6 +154,7 @@
 				"SUPPORTED_PLATFORMS" = "iphoneos iphonesimulator";
 				"NINHO_APP_GROUP" = "group.com.aless.ninho.ios";
 				"NINHO_ICLOUD_CONTAINER" = "iCloud.com.aless.ninho.ios";
+				"NINHO_APP_STORE_ID" = "";
 				"DEBUG_INFORMATION_FORMAT" = "dwarf-with-dsym";
 				"SWIFT_OPTIMIZATION_LEVEL" = "-O";
 				"SWIFT_COMPILATION_MODE" = "wholemodule";

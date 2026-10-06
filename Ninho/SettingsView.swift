@@ -36,6 +36,7 @@ struct SettingsView: View {
             Section("Sobre a Íris") {
                 Text("A Íris acompanha seu perfil, revisões e sessões com uma análise local incluída no Ninho. Funciona offline, sem importar modelos ou depender de Apple Intelligence. As sugestões mostram suas fontes e os limites da amostra. O tempo ativo por tela é agregado por até 90 dias, separado de estudo. Não monitoramos outros aplicativos nem medimos sua atenção.").font(.body).foregroundStyle(.secondary)
             }
+            AppAcquisitionSettings()
             if store.busy { ProgressView("Cuidando da sua coleção…") }
             if !store.notice.isEmpty { Text(store.notice).font(.body).accessibilityIdentifier("app.notice") }
         }.navigationTitle("Ajustes").accessibilityIdentifier("screen.settings").ninhoActivity(.settings).task { settings = store.displaySettings; initialized = true }

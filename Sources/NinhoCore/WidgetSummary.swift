@@ -8,8 +8,9 @@ public enum StudyStreak {
     }
 
     public static func activeDays(in sessions: [StudySession], at now: Date, calendar: Calendar = .current) -> Set<String> {
-        Set(sessions.compactMap { session in
-            guard countsAsStudy(session), let completed = StudyEngine.parseTimestamp(session.completedAt), completed <= now else { return nil }
+        let dates = StudyTimestampParser()
+        return Set(sessions.compactMap { session in
+            guard countsAsStudy(session), let completed = dates.parse(session.completedAt), completed <= now else { return nil }
             return StudyEngine.localDate(completed, calendar: calendar)
         })
     }
@@ -31,13 +32,14 @@ public enum StudyStreak {
 
 public enum WidgetSummary {
     public static func make(state: AppState, focus: FocusTimer = FocusTimer(), at now: Date = Date(), calendar: Calendar = .current) -> WidgetSnapshot {
+        let timestamps = StudyTimestampParser()
         let start = calendar.startOfDay(for: now)
         var until = calendar.date(byAdding: .day, value: 8, to: start) ?? now.addingTimeInterval(7 * 86400)
         var dates: Set<Date> = [now]
         for offset in 1...7 {
             if let date = calendar.date(byAdding: .day, value: offset, to: start) { dates.insert(date) }
         }
-        let counts = ReviewCounts(state: state, now: now, calendar: calendar)
+        let counts = ReviewCounts(state: state, now: now, calendar: calendar, timestamps: timestamps)
         let dueDates = Set(counts.reviews + counts.fresh).filter { $0 > now && $0 < until }.sorted()
         for date in dueDates.prefix(48) { dates.insert(date) }
         // A bounded snapshot never presents a knowingly stale count after an
@@ -47,7 +49,7 @@ public enum WidgetSummary {
         if let end, end > now, end < until { dates.insert(end) }
         var active = Set<String>(), minutes: [String: Double] = [:]
         for session in state.sessions {
-            guard let completed = StudyEngine.parseTimestamp(session.completedAt), completed <= now,
+            guard let completed = timestamps.parse(session.completedAt), completed <= now,
                   session.durationMinutes.isFinite, session.durationMinutes >= 0 else { continue }
             let day = StudyEngine.localDate(completed, calendar: calendar)
             minutes[day, default: 0] += session.durationMinutes
@@ -70,18 +72,18 @@ public enum WidgetSummary {
         let fresh: [Date]
         let newLimit: Int
         let firstByDay: [String: Int]
-        init(state: AppState, now: Date, calendar: Calendar) {
+        init(state: AppState, now: Date, calendar: Calendar, timestamps: StudyTimestampParser) {
             var reviewDates: [Date] = [], newDates: [Date] = [], firstDays: [String: Int] = [:], tracked = Set<String>()
             for session in state.sessions where session.kind == .review && session.id.hasPrefix("review:first:") {
-                guard let completed = StudyEngine.parseTimestamp(session.completedAt), completed <= now else { continue }
+                guard let completed = timestamps.parse(session.completedAt), completed <= now else { continue }
                 tracked.insert(String(session.id.dropFirst("review:first:".count)))
                 firstDays[StudyEngine.localDate(completed, calendar: calendar), default: 0] += 1
             }
             for card in state.cards {
-                if !tracked.contains(card.id), card.repetitions == 1, let last = card.lastReviewedAt.flatMap(StudyEngine.parseTimestamp), last <= now {
+                if !tracked.contains(card.id), card.repetitions == 1, let last = card.lastReviewedAt.flatMap(timestamps.parse), last <= now {
                     firstDays[StudyEngine.localDate(last, calendar: calendar), default: 0] += 1
                 }
-                guard !card.suspended, let due = StudyEngine.parseTimestamp(card.dueAt) else { continue }
+                guard !card.suspended, let due = timestamps.parse(card.dueAt) else { continue }
                 if card.lastReviewedAt != nil { reviewDates.append(due) } else { newDates.append(due) }
             }
             reviews = reviewDates.sorted(); fresh = newDates.sorted(); newLimit = state.settings.newCardsPerDay; firstByDay = firstDays

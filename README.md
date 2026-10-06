@@ -4,6 +4,20 @@ Repositório independente do aplicativo Swift/SwiftUI, com o projeto `Ninho.xcod
 
 ## Ambiente
 
+### Venda única pela App Store
+
+A distribuição comercial será um **app pago**, adquirido antes de instalar, sem assinatura, chave digitada ou produto In-App Purchase. A primeira confirmação usa a assinatura da Apple por `AppTransaction`/StoreKit. A aquisição de produção fica no Keychain deste iPhone para uso diário offline, sem prazo; não entra nos backups dos estudos. Em outro aparelho, ou se essa confirmação não estiver disponível, **Restaurar aquisição** consulta a App Store sem cobrar novamente. TestFlight/sandbox não gera uma aquisição definitiva. [Verificação da Apple](https://developer.apple.com/documentation/storekit/apptransaction).
+
+O **Apple ID numérico real do app no App Store Connect** ainda precisa ser configurado em `NINHO_APP_STORE_ID`. O padrão é vazio: Release no iPhone bloqueia o acesso quando esse dado está ausente, e o script de archive recusa uma publicação sem ele. Debug/simulador continuam disponíveis para desenvolvimento, sem se apresentarem como compra confirmada. No Xcode, ajuste o build setting no projeto; por script no Mac:
+
+```bash
+export NINHO_APP_STORE_ID="<Apple ID numérico real do app>"
+export NINHO_DEVELOPMENT_TEAM="<Team ID da conta Apple>"
+bash scripts/archive-macos.sh
+```
+
+Preço, contrato Paid Apps, dados fiscais/bancários e distribuição precisam ser preparados no App Store Connect pelo titular da conta. Nenhum preço, conta, certificado ou publicação foi alterado aqui. A configuração e o roteiro de testes reais estão em [APP-STORE-AQUISICAO.md](devdocs/APP-STORE-AQUISICAO.md). O uso offline não permite verificar reembolsos em tempo real nem garante resistência a aplicativos adulterados.
+
 ### Backup diário leve e recuperação
 
 Em **Perfil → Preferências e backup → Backup leve**, o aplicativo mantém os últimos sete dias de cópias compactas de perfil, configurações, tutoriais, estudos e planos/análises salvas. Preserva nomes e vínculos dos materiais, mas exclui anexos e modelos pesados. O iCloud Drive é opcional, começa desligado e usa o container próprio do aplicativo; também há exportação/importação por Arquivos. Uma cópia externa disponível permite recuperar após reinstalar; somente a cópia interna não sobrevive à exclusão do aplicativo. Veja [BACKUP-LEVE.md](devdocs/BACKUP-LEVE.md) para uso, limites e configuração de `NINHO_ICLOUD_CONTAINER`/iCloud Documents no Xcode. O iOS controla trabalho e transferências em segundo plano; não há promessa de execução diária com o app fechado.
@@ -40,6 +54,22 @@ docker run --rm --mount "type=bind,source=$($PWD.Path),target=/workspace" -w /wo
 ```
 
 O Windows não dispõe do SDK Apple: compilação nativa, testes no simulador, assinatura e instalação no iPhone permanecem pendentes de Mac/Xcode. O workflow em `.github/workflows/ios.yml` é manual e não foi publicado nem executado.
+
+### Testes de desempenho
+
+O cenário sintético usa 71, 1.000 e 5.000 cartões com o mesmo número de sessões; mede cinco amostras de ordenação de revisões, busca do acervo, resumo, widgets e validação, exibindo mediana e máximo. A fila é exercitada com vencimentos repetidos e também com todos os horários distintos. A criação dos dados fica fora da medição. No Mac/Linux:
+
+```bash
+NINHO_PERFORMANCE=1 swift test -c release --filter StudyPerformanceTests
+```
+
+No Windows, com Docker Desktop:
+
+```powershell
+docker run --rm --mount "type=bind,source=$($PWD.Path),target=/workspace" -w /workspace -e NINHO_PERFORMANCE=1 swift:6.2 swift test -c release --jobs 2 --filter StudyPerformanceTests
+```
+
+Esses tempos medem o núcleo, sem desenho da interface. Para medir navegação do acervo, CPU e memória da aplicação, execute `CardLibraryPerformanceTests` no Test Navigator do Xcode em uma compilação Release. O teste usa perfis temporários de UI, abre e fecha o acervo cinco vezes e encontra/edita o último cartão. Os três volumes também fazem parte de `bash scripts/test-macos.sh`; esse script usa Debug, portanto seus tempos não devem ser comparados diretamente ao Release. Confira no iPhone com Instruments (Time Profiler, Animation Hitches e Allocations) antes de concluir sobre fluidez e consumo no aparelho.
 
 ## Git
 

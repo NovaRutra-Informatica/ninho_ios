@@ -18,6 +18,30 @@ class ProjectTests(unittest.TestCase):
         self.project = generator.project()
         self.objects = self.project["objects"]
 
+    def test_paid_app_requires_real_store_configuration_in_release(self):
+        info = plistlib.loads((generator.ROOT / "Ninho/Info.plist").read_bytes())
+        self.assertEqual(info["NinhoAppStoreID"], "$(NINHO_APP_STORE_ID)")
+        release = self.objects[generator.identifier("config.project.Release")]["buildSettings"]
+        self.assertEqual(release["NINHO_APP_STORE_ID"], "")
+        self.assertNotIn("DEBUG", release.get("SWIFT_ACTIVE_COMPILATION_CONDITIONS", ""))
+        archive = (generator.ROOT / "scripts/archive-macos.sh").read_text()
+        self.assertIn('SIGNING_ARGS+=("NINHO_APP_STORE_ID=$NINHO_APP_STORE_ID")', archive)
+        self.assertLess(archive.index('NINHO_APP_STORE_ID:-'), archive.index('xcodebuild -project'))
+
+    def test_acquisition_gate_uses_verified_storekit_not_study_preferences(self):
+        source = (generator.ROOT / "Ninho/AppAcquisition.swift").read_text()
+        app = (generator.ROOT / "Ninho/NinhoApp.swift").read_text()
+        self.assertIn("AppAcquisitionGate { NinhoRootView() }", app)
+        self.assertIn("guard case .verified(let transaction) = result", source)
+        self.assertIn("AppTransaction.shared", source)
+        self.assertIn("AppTransaction.refresh()", source)
+        self.assertIn("kSecAttrAccessibleWhenUnlockedThisDeviceOnly", source)
+        self.assertIn("kSecAttrSynchronizable as String: false", source)
+        self.assertIn("#if DEBUG || targetEnvironment(simulator)", source)
+        self.assertNotIn("UserDefaults", source)
+        self.assertNotIn("ProcessInfo", source)
+        self.assertNotIn("Product.purchase", source)
+
     def test_icloud_backup_container_is_configurable_and_app_only(self):
         info = plistlib.loads((generator.ROOT / "Ninho/Info.plist").read_bytes())
         app = plistlib.loads((generator.ROOT / "Ninho/Ninho.entitlements").read_bytes())
